@@ -492,7 +492,33 @@ const LINE_OPTS = [...STATS.map(s => s.k), 'other'];
 let found = [];   // review list: {sig, slot, lines, issues, seen}
 let live = null;
 const scanOk = f => f.slot >= 0 && validLines(f.lines);
-function setScanStatus(msg, isLive){ $('scanStatus').textContent = msg; $('scanStatus').classList.toggle('live', !!isLive); }
+// ---------- debug logging (only with ?debug when served by tools/debug_server.py) ----------
+// Every scanner event (frames, detection reasoning, OCR passes and text, parse results), every item decision,
+// UI action, status message and error is sent to the local server, which writes debug/scan-log.jsonl.
+const DEBUG = /^https?:$/.test(location.protocol) && new URLSearchParams(location.search).has('debug');
+let lastPeriodicFrame = 0, lastStatusLogged = '';
+function post(path, body, type){ return fetch(path, {method:'POST', headers:{'Content-Type':type}, body}).catch(() => {}); }
+function dbg(type, data){
+  if(!DEBUG) return;
+  post('/debug/log', JSON.stringify({type, at:new Date().toISOString(), ...data}), 'application/json');
+}
+function snapshot(kind, canvas){
+  if(!DEBUG || !canvas) return;
+  canvas.toBlob(b => b && post('/debug/frame?kind=' + encodeURIComponent(kind), b, 'image/png'), 'image/png');
+}
+if(DEBUG){
+  Scanner.setLogger(dbg);
+  window.addEventListener('error', e => dbg('error', {where:'window', message:e.message, file:e.filename, line:e.lineno, stack:e.error && e.error.stack}));
+  window.addEventListener('unhandledrejection', e => dbg('error', {where:'promise', message:String(e.reason && e.reason.message || e.reason), stack:e.reason && e.reason.stack}));
+  document.addEventListener('visibilitychange', () => dbg('page', {visibility:document.visibilityState}));
+  dbg('session-start', {ua:navigator.userAgent, screen:[screen.width, screen.height], dpr:devicePixelRatio, trackProcessor:!!window.MediaStreamTrackProcessor,
+    itemsStored:state.items.map((a, i) => SLOTS[i] + ':' + a.length).join(' ')});
+}
+
+function setScanStatus(msg, isLive){
+  $('scanStatus').textContent = msg; $('scanStatus').classList.toggle('live', !!isLive);
+  if(msg !== lastStatusLogged){ lastStatusLogged = msg; dbg('status', {message:msg}); }
+}
 function showPreview(c){
   $('readView').classList.add('show');
   const p = $('scanPreview'); p.width = c.width; p.height = c.height;
@@ -503,9 +529,10 @@ function addFound(p){
   const label = `${p.slot >= 0 ? SLOTS[p.slot] : 'Unknown slot'}: ${lines.map(k => NAME[k]).join(' · ')}`;
   const complete = p.slot >= 0 && validLines(lines);
   const dup = found.find(f => f.sig === p.sig || (complete && f.slot === p.slot && lineKey(f.lines) === lineKey(lines)));
-  if(complete && findItem(p.slot, lines)){ setScanStatus(`Skipped ${label}. It's already recorded.`, live && live.running); return; }
-  if(dup){ dup.seen++; setScanStatus(`Already in the list: ${label}`, live && live.running); }
-  else{ found.push({sig:p.sig, slot:p.slot, lines, issues:p.issues, seen:1}); setScanStatus(`Found ${label}`, live && live.running); }
+  const info = {label, slot:p.slot, lines, sig:p.sig, issues:p.issues};
+  if(complete && findItem(p.slot, lines)){ dbg('item', {action:'skipped-already-recorded', ...info}); setScanStatus(`Skipped ${label}. It's already recorded.`, live && live.running); return; }
+  if(dup){ dup.seen++; dbg('item', {action:'duplicate-in-review-list', seen:dup.seen, ...info}); setScanStatus(`Already in the list: ${label}`, live && live.running); }
+  else{ found.push({sig:p.sig, slot:p.slot, lines, issues:p.issues, seen:1}); dbg('item', {action:'added-to-review-list', complete, listSize:found.length, ...info}); setScanStatus(`Found ${label}`, live && live.running); }
   renderFound();
 }
 function renderFound(){
@@ -528,61 +555,46 @@ function renderFound(){
 }
 $('scanList').addEventListener('change', e => {
   const t = e.target;
-  if(t.dataset.fslot !== undefined) found[+t.dataset.fslot].slot = +t.value;
-  else if(t.dataset.fline !== undefined) found[+t.dataset.fline].lines[+t.dataset.j] = t.value;
+  if(t.dataset.fslot !== undefined){ const f = found[+t.dataset.fslot]; dbg('ui', {action:'edit-slot', row:+t.dataset.fslot, from:f.slot, to:+t.value}); f.slot = +t.value; }
+  else if(t.dataset.fline !== undefined){ const f = found[+t.dataset.fline], j = +t.dataset.j; dbg('ui', {action:'edit-line', row:+t.dataset.fline, line:j, from:f.lines[j], to:t.value}); f.lines[j] = t.value; }
   renderFound();
 });
 $('scanList').addEventListener('click', e => {
   const t = e.target.closest('[data-fdel]'); if(!t) return;
-  e.stopPropagation(); found.splice(+t.dataset.fdel, 1); renderFound();
+  e.stopPropagation();
+  const f = found[+t.dataset.fdel]; dbg('ui', {action:'remove-row', slot:f.slot, lines:f.lines});
+  found.splice(+t.dataset.fdel, 1); renderFound();
 });
 $('scanImportBtn').onclick = () => {
   const ok = found.filter(scanOk);
-  let added = 0, last = null;
-  ok.forEach(f => { const r = addItem(f.slot, f.lines); if(r.added){ added++; last = {slot:f.slot, id:r.item.id}; } });
+  let added = 0, last = null; const results = [];
+  ok.forEach(f => { const r = addItem(f.slot, f.lines); results.push({slot:SLOTS[f.slot], lines:f.lines, added:r.added}); if(r.added){ added++; last = {slot:f.slot, id:r.item.id}; } });
   found = found.filter(f => !scanOk(f));
   if(last){ state.active = last.slot; flashId = last.id; }
   render(); renderFound();
   const skipped = ok.length - added;
+  dbg('ui', {action:'import', added, skipped, leftInList:found.length, results});
   setScanStatus(`Imported ${added} item${added === 1 ? '' : 's'}${skipped ? `, skipped ${skipped} already recorded` : ''}.`, live && live.running);
 };
-$('scanClearBtn').onclick = () => { found = []; renderFound(); };
+$('scanClearBtn').onclick = () => { dbg('ui', {action:'clear-review-list', had:found.length}); found = []; renderFound(); };
 $('scanBtn').onclick = async () => {
-  if(live && live.running){ live.stop(); return; }
+  if(live && live.running){ dbg('ui', {action:'stop-scan'}); live.stop(); return; }
+  dbg('ui', {action:'start-scan'});
   if(!navigator.mediaDevices || !navigator.mediaDevices.getDisplayMedia){ setScanStatus('Screen sharing is not supported in this browser. Try Chrome or Edge, or paste screenshots instead.'); return; }
   live = Scanner.createLiveScanner({
     onStatus: m => setScanStatus(m, true),
     onItem: addFound,
     onPreview: showPreview,
-    onFrame: drawLive,
-    onDebug: DEBUG ? debugEvent : null,
+    onFrame: f => {
+      drawLive(f);
+      if(DEBUG && Date.now() - lastPeriodicFrame > 5000){ lastPeriodicFrame = Date.now(); snapshot('periodic', f.canvas); }
+    },
+    onSnapshot: DEBUG ? snapshot : null,
     onStop: () => { $('scanBtn').textContent = 'Start scan'; setScanStatus('Not scanning.'); $('liveView').classList.remove('show'); }
   });
   try{ await live.start(); $('scanBtn').textContent = 'Stop scan'; }
-  catch(err){ setScanStatus(err.name === 'NotAllowedError' ? 'Screen share was cancelled.' : 'Could not start: ' + err.message); }
+  catch(err){ dbg('error', {where:'start-scan', name:err.name, message:err.message}); setScanStatus(err.name === 'NotAllowedError' ? 'Screen share was cancelled.' : 'Could not start: ' + err.message); }
 };
-// ---------- debug logging (only with ?debug when served by tools/debug_server.py) ----------
-const DEBUG = /^https?:$/.test(location.protocol) && new URLSearchParams(location.search).has('debug');
-let lastFramePost = 0, lastFrameLog = 0;
-function post(path, body, type){ return fetch(path, {method:'POST', headers:{'Content-Type':type}, body}).catch(() => {}); }
-function postPng(kind, canvas){ canvas.toBlob(b => b && post('/debug/frame?kind=' + kind, b, 'image/png'), 'image/png'); }
-function debugEvent(e){
-  const now = Date.now();
-  const {canvas, crop, parsed, ...rest} = e;
-  const entry = {...rest, at:new Date().toISOString()};
-  if(parsed) entry.parsed = {slot:parsed.slot, lines:parsed.lines, raw:parsed.raw, title:parsed.title, issues:parsed.issues, sig:parsed.sig};
-  if(e.type === 'frame'){
-    // Log frames about once a second, and save a full frame every 5s so detection can be checked offline.
-    if(now - lastFrameLog < 1000) return;
-    lastFrameLog = now;
-    if(canvas && now - lastFramePost > 5000){ lastFramePost = now; postPng(e.panels.length ? 'frame-found' : 'frame-none', canvas); }
-  }else{
-    if(canvas) postPng(e.type + '-full', canvas);
-    if(crop) postPng(e.type + '-crop', crop);
-  }
-  post('/debug/log', JSON.stringify(entry), 'application/json');
-}
-if(DEBUG) post('/debug/log', JSON.stringify({type:'start', at:new Date().toISOString(), ua:navigator.userAgent, screen:[screen.width, screen.height, devicePixelRatio], processor:!!window.MediaStreamTrackProcessor}), 'application/json');
 
 // Downscaled copy of the captured frame, with the tooltip panels outlined (green = the one that gets read).
 function drawLive({canvas, width, height, panels, fps}){
@@ -591,16 +603,18 @@ function drawLive({canvas, width, height, panels, fps}){
   c.width = Math.round(width * scale); c.height = Math.round(height * scale);
   const g = c.getContext('2d'); g.drawImage(canvas, 0, 0, c.width, c.height);
   panels.forEach((b, i) => { g.lineWidth = 2; g.strokeStyle = i === 0 ? '#1fd68a' : '#9aa3b5'; g.strokeRect(b.x * scale, b.y * scale, b.w * scale, b.h * scale); });
-  $('liveInfo').textContent = `${fps == null ? 'Screenshot' : 'Capture'} ${width}×${height}${fps == null ? '' : ` · ${fps.toFixed(1)} fps`} · ${panels.length ? `tooltip found (${panels[0].w}×${panels[0].h}${panels.length > 1 ? ', + equipped' : ''})` : 'no tooltip found'}`;
+  $('liveInfo').textContent = `${fps == null ? 'Screenshot' : 'Capture'} ${width}×${height}${fps == null ? '' : ` · ${fps.toFixed(1)} fps`} · ${panels.length ? `tooltip found (${panels[0].w}×${panels[0].h}${panels.length > 1 ? `, +${panels.length - 1} more` : ''})` : 'no tooltip found'}`;
 }
 async function scanFile(file){
+  dbg('ui', {action:'paste-or-drop', name:file.name, type:file.type, bytes:file.size});
   try{
     const r = await Scanner.scanImage(file, m => setScanStatus(m));
-    if(DEBUG) debugEvent({type:'paste', width:r.source.width, height:r.source.height, panels:r.panels, text:r.text, parsed:r, canvas:r.source, crop:r.preview});
+    snapshot('paste-full', r.source); snapshot('paste-crop', r.preview);
     showPreview(r.preview);
     drawLive({canvas:r.source, width:r.source.width, height:r.source.height, panels:r.panels, fps:null});
-    if(r.lines.length || r.slot >= 0) addFound(r); else setScanStatus('No hologram lines found in that image.');
-  }catch(err){ setScanStatus('Could not read image: ' + err.message); }
+    if(r.lines.length || r.slot >= 0) addFound(r);
+    else{ dbg('item', {action:'unreadable', source:'paste'}); setScanStatus('No hologram lines found in that image.'); }
+  }catch(err){ dbg('error', {where:'paste', message:err.message, stack:err.stack}); setScanStatus('Could not read image: ' + err.message); }
 }
 document.addEventListener('paste', e => {
   const f = [...(e.clipboardData ? e.clipboardData.files : [])].find(f => f.type.startsWith('image/'));

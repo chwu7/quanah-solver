@@ -174,3 +174,30 @@ test('finds hovered + equipped tooltips on a full game screenshot (touching the 
     assert.ok(Math.abs(b.x - 1593) <= 4, JSON.stringify(b));
   }
 });
+
+// Real frames from a live capture (cropped to the game area on the right).
+test('live frame: tooltip bottom over grey floor still gets its full height', () => {
+  const im = decodePng(new URL('./fixtures/live-top-over-floor.png', import.meta.url));
+  const panels = S.findPanels(im);
+  assert.equal(panels.length, 2, JSON.stringify(panels));
+  const [a, b] = panels;
+  assert.ok(a.w >= 318 && a.w <= 328, JSON.stringify(a));
+  assert.ok(a.y <= 440 && a.y + a.h >= 1015, `hovered tooltip reaches the bottom lines: ${JSON.stringify(a)}`);
+  assert.ok(b.x >= a.x + a.w - 4, 'panels do not overlap');
+});
+
+test('live frame: equipped item with its set-effect list beside it', () => {
+  const im = decodePng(new URL('./fixtures/live-equipped-hat-set.png', import.meta.url));
+  const panels = S.findPanels(im);
+  assert.equal(panels.length, 2, JSON.stringify(panels));
+  assert.ok(panels[0].w >= 318 && panels[0].w <= 328 && panels[0].h >= 600, JSON.stringify(panels[0]));
+});
+
+test('fingerprint: repeated frames are "same"; a different item at the same spot is "changed"', () => {
+  const one = decodePng(new URL('./fixtures/live-top-over-floor.png', import.meta.url));
+  const two = decodePng(new URL('./fixtures/live-top-same-spot.png', import.meta.url));   // another Top, same position
+  const [a] = S.findPanels(one), [b] = S.findPanels(two);
+  assert.ok(S.sameBox(a, b), 'same tooltip position: ' + JSON.stringify([a, b]));
+  assert.equal(S.thumbDiff(S.thumb(one, a), S.thumb(one, a)), 0);
+  assert.ok(S.thumbDiff(S.thumb(one, a), S.thumb(two, b)) > 0.1, 'different item must register as a change');
+});

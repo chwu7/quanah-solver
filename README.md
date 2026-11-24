@@ -12,4 +12,4 @@ Line caps and target sets follow the [Quanah World Utilities](https://altord.git
 
 Tests: `node --test test/parse.test.mjs`
 
-Scanner debugging: run `python tools/debug_server.py`, open http://localhost:8000/?debug and scan as usual. Detection/OCR events go to `debug/scan-log.jsonl` and captured frames to `debug/frames/` (git-ignored, never uploaded).
+Scanner debugging: run `python tools/debug_server.py`, open http://localhost:8000/?debug and scan as usual. Every frame decision, edge candidate, OCR pass (with raw text), parse result, item decision, UI action and error goes to `debug/scan-log.jsonl`, with captured frames in `debug/frames/` (git-ignored, never uploaded; each run keeps the previous one as `.prev`). `node tools/detect.mjs debug/frames/*.png` re-runs detection offline.
