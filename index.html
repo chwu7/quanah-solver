@@ -555,11 +555,35 @@ $('scanBtn').onclick = async () => {
     onItem: addFound,
     onPreview: showPreview,
     onFrame: drawLive,
+    onDebug: DEBUG ? debugEvent : null,
     onStop: () => { $('scanBtn').textContent = 'Start scan'; setScanStatus('Not scanning.'); $('liveView').classList.remove('show'); }
   });
   try{ await live.start(); $('scanBtn').textContent = 'Stop scan'; }
   catch(err){ setScanStatus(err.name === 'NotAllowedError' ? 'Screen share was cancelled.' : 'Could not start: ' + err.message); }
 };
+// ---------- debug logging (only with ?debug when served by tools/debug_server.py) ----------
+const DEBUG = /^https?:$/.test(location.protocol) && new URLSearchParams(location.search).has('debug');
+let lastFramePost = 0, lastFrameLog = 0;
+function post(path, body, type){ return fetch(path, {method:'POST', headers:{'Content-Type':type}, body}).catch(() => {}); }
+function postPng(kind, canvas){ canvas.toBlob(b => b && post('/debug/frame?kind=' + kind, b, 'image/png'), 'image/png'); }
+function debugEvent(e){
+  const now = Date.now();
+  const {canvas, crop, parsed, ...rest} = e;
+  const entry = {...rest, at:new Date().toISOString()};
+  if(parsed) entry.parsed = {slot:parsed.slot, lines:parsed.lines, raw:parsed.raw, title:parsed.title, issues:parsed.issues, sig:parsed.sig};
+  if(e.type === 'frame'){
+    // Log frames about once a second, and save a full frame every 5s so detection can be checked offline.
+    if(now - lastFrameLog < 1000) return;
+    lastFrameLog = now;
+    if(canvas && now - lastFramePost > 5000){ lastFramePost = now; postPng(e.panels.length ? 'frame-found' : 'frame-none', canvas); }
+  }else{
+    if(canvas) postPng(e.type + '-full', canvas);
+    if(crop) postPng(e.type + '-crop', crop);
+  }
+  post('/debug/log', JSON.stringify(entry), 'application/json');
+}
+if(DEBUG) post('/debug/log', JSON.stringify({type:'start', at:new Date().toISOString(), ua:navigator.userAgent, screen:[screen.width, screen.height, devicePixelRatio], processor:!!window.MediaStreamTrackProcessor}), 'application/json');
+
 // Downscaled copy of the captured frame, with the tooltip panels outlined (green = the one that gets read).
 function drawLive({canvas, width, height, panels, fps}){
   $('liveView').classList.add('show');
@@ -572,6 +596,7 @@ function drawLive({canvas, width, height, panels, fps}){
 async function scanFile(file){
   try{
     const r = await Scanner.scanImage(file, m => setScanStatus(m));
+    if(DEBUG) debugEvent({type:'paste', width:r.source.width, height:r.source.height, panels:r.panels, text:r.text, parsed:r, canvas:r.source, crop:r.preview});
     showPreview(r.preview);
     drawLive({canvas:r.source, width:r.source.width, height:r.source.height, panels:r.panels, fps:null});
     if(r.lines.length || r.slot >= 0) addFound(r); else setScanStatus('No hologram lines found in that image.');

@@ -146,6 +146,59 @@ function findRegion(img, opts = {}){
   return box;
 }
 
+// Tooltip frame, from outside in: a 1px dark line (~39,47,55), a 1px lighter line (~76,87,95), then the panel.
+// Detecting tall runs of that pattern finds tooltips even when they touch dark game scenery or other windows.
+const isDarkLine = (r, g, b) => r >= 24 && r <= 56 && g >= 32 && g <= 64 && b >= 38 && b <= 72 && b - r >= 6;
+const isLightLine = (r, g, b) => r >= 60 && r <= 130 && g >= 70 && g <= 155 && b >= 78 && b <= 165 && b - r >= 8;
+function edgeRuns(img, side, minLen){
+  const {width:W, height:H, data:d} = img, out = [];
+  const dir = side === 'left' ? 1 : -1, GAP = 12;
+  const x0 = side === 'left' ? 0 : 3, x1 = side === 'left' ? W - 3 : W;
+  for(let x = x0; x < x1; x++){
+    let start = -1, last = -GAP - 1;
+    for(let y = 0; y <= H; y++){
+      let hit = false;
+      if(y < H){
+        const i = (y * W + x) * 4;
+        if(isDarkLine(d[i], d[i + 1], d[i + 2])){
+          const j = i + dir * 4, k = i + dir * 12;
+          hit = isLightLine(d[j], d[j + 1], d[j + 2]) && isPanel(d[k], d[k + 1], d[k + 2]) && d[j] + d[j + 1] + d[j + 2] >= d[i] + d[i + 1] + d[i + 2] + 30;
+        }
+      }
+      if(hit){ if(y - last > GAP) start = y; last = y; }
+      else if(start >= 0 && y - last > GAP){ if(last - start >= minLen) out.push({x, y0:start, y1:last}); start = -1; }
+    }
+  }
+  return out;
+}
+function panelFill(img, b){
+  const {width:W, data:d} = img; let n = 0, t = 0;
+  for(let y = b.y + 4; y < b.y + b.h - 4; y += 4) for(let x = b.x + 4; x < b.x + b.w - 4; x += 4){
+    t++; const i = (y * W + x) * 4; if(isPanel(d[i], d[i + 1], d[i + 2])) n++;
+  }
+  return t ? n / t : 0;
+}
+function findPanelsByBorder(img, opts = {}){
+  const minW = opts.minW || 180, minH = opts.minH || 220;
+  const lefts = edgeRuns(img, 'left', minH), rights = edgeRuns(img, 'right', minH);
+  const panels = [];
+  for(const L of lefts){
+    let best = null;
+    for(const R of rights){
+      const w = R.x - L.x; if(w < minW || w > 900) continue;
+      const ov = Math.min(L.y1, R.y1) - Math.max(L.y0, R.y0);
+      if(ov < 0.7 * Math.min(L.y1 - L.y0, R.y1 - R.y0)) continue;
+      if(!best || R.x < best.x) best = R;
+    }
+    if(!best) continue;
+    const box = {x:L.x, y:Math.min(L.y0, best.y0), w:best.x - L.x + 1, h:Math.max(L.y1, best.y1) - Math.min(L.y0, best.y0) + 1};
+    // Other windows (like the inventory) have a similar frame, but a tooltip is mostly dark panel inside.
+    if(panelFill(img, box) < 0.55) continue;
+    if(!panels.some(p => Math.abs(p.x - box.x) < 6 && Math.abs(p.y - box.y) < 12)) panels.push(box);
+  }
+  return panels.sort((a, b) => a.x - b.x);
+}
+
 // Runs of indices whose panel fraction is at least `min`, as [start, end) pairs.
 function runs(fracs, min){
   const out = []; let s = -1;
@@ -156,6 +209,8 @@ function runs(fracs, min){
 // Hovering an item shows its tooltip with the equipped item's tooltip beside it. Both panels form one dark
 // region, split by a thin light border where almost no pixel is panel-coloured. Returns each panel, left to right.
 function findPanels(img, opts = {}){
+  const framed = findPanelsByBorder(img, opts);
+  if(framed.length) return framed;
   const region = findRegion(img, opts); if(!region) return [];
   const {width:W, data:d} = img, minW = opts.minW || 180, minH = opts.minH || 220;
   const at = (x, y) => { const i = (y * W + x) * 4; return isPanel(d[i], d[i + 1], d[i + 2]); };
@@ -264,7 +319,7 @@ async function scanImage(source, onStatus){
 // Frames are pulled straight from the capture track (MediaStreamTrackProcessor) when the browser supports it,
 // which keeps working while the game window covers Chrome; timers and hidden <video> elements get throttled then.
 const sameBox = (a, b) => !!a && !!b && Math.abs(a.x - b.x) <= 6 && Math.abs(a.y - b.y) <= 6 && Math.abs(a.w - b.w) <= 8 && Math.abs(a.h - b.h) <= 8;
-function createLiveScanner({onStatus, onItem, onPreview, onFrame, onStop, interval = 400}){
+function createLiveScanner({onStatus, onItem, onPreview, onFrame, onDebug, onStop, interval = 400}){
   let stream = null, running = false, busy = false, reader = null, video = null, timer = null;
   let prev = null, lastOcr = null, lastAt = 0, frames = 0, fpsAt = 0, fps = 0;
   const canvas = document.createElement('canvas'), g = canvas.getContext('2d', {willReadFrequently:true});
@@ -273,16 +328,18 @@ function createLiveScanner({onStatus, onItem, onPreview, onFrame, onStop, interv
   function analyse(){
     const W = canvas.width, H = canvas.height;
     const img = g.getImageData(0, 0, W, H);
-    const panels = findPanels(img), box = panels[0];
+    const t0 = performance.now(), panels = findPanels(img), box = panels[0], detectMs = performance.now() - t0;
     frames++; const now = performance.now();
     if(now - fpsAt >= 1000){ fps = frames * 1000 / (now - fpsAt || 1); frames = 0; fpsAt = now; }
     onFrame && onFrame({canvas, width:W, height:H, panels, fps});
-    if(!box){ prev = null; if(!busy) onStatus('Watching… no tooltip on screen. Hover over an item.'); return; }
+    if(!box){ onDebug && onDebug({type:'frame', width:W, height:H, panels, detectMs:Math.round(detectMs), canvas}); prev = null; if(!busy) onStatus('Watching… no tooltip on screen. Hover over an item.'); return; }
     const t = thumb(img, box);
     // Read once the tooltip has stopped moving (same place and look as last frame), and not the one just read.
     const settled = sameBox(box, prev && prev.box) && thumbDiff(t, prev.t) < 12;
+    onDebug && onDebug({type:'frame', width:W, height:H, panels, detectMs:Math.round(detectMs), settled, busy, canvas});
     prev = {box, t};
-    if(!settled || busy || (sameBox(box, lastOcr && lastOcr.box) && thumbDiff(t, lastOcr.t) < 12)) return;
+    if(!settled || busy) return;
+    if(sameBox(box, lastOcr && lastOcr.box) && thumbDiff(t, lastOcr.t) < 12){ onStatus(lastOcr.msg || 'Tooltip already read. Hover over the next item.'); return; }
     busy = true; lastOcr = {box, t};
     // OCR a snapshot so new frames can keep coming in meanwhile.
     const snap = document.createElement('canvas'); snap.width = W; snap.height = H; snap.getContext('2d').drawImage(canvas, 0, 0);
@@ -290,8 +347,10 @@ function createLiveScanner({onStatus, onItem, onPreview, onFrame, onStop, interv
     ocrHovered(snap, panels, onStatus).then(r => {
       const p = {...parseTooltip(r.text), text:r.text};
       onPreview && onPreview(r.canvas);
+      onDebug && onDebug({type:'ocr', width:W, height:H, panels, text:r.text, parsed:p, canvas:snap, crop:r.canvas});
       if(p.lines.length || p.slot >= 0) onItem(p); else onStatus('Found a tooltip but could not read hologram lines from it.');
-    }).catch(e => onStatus('OCR error: ' + e.message)).finally(() => { busy = false; });
+      if(lastOcr) lastOcr.msg = 'Tooltip already read. Hover over the next item.';
+    }).catch(e => { onStatus('OCR error: ' + e.message); onDebug && onDebug({type:'error', message:e.message}); }).finally(() => { busy = false; });
   }
 
   async function pump(track){

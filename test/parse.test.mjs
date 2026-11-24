@@ -142,8 +142,9 @@ test('findPanel locates the tooltip in a larger frame', () => {
   for(let y = 0; y < tip.height; y++) tip.data.copy(data, ((oy + y) * W + ox) * 4, y * tip.width * 4, (y + 1) * tip.width * 4);
   const box = S.findPanel({width:W, height:H, data});
   assert.ok(box, 'panel found');
-  assert.ok(box.x <= ox + 6 && box.y <= oy + 6, `box starts before tooltip: ${JSON.stringify(box)}`);
-  assert.ok(box.x + box.w >= ox + tip.width - 8 && box.y + box.h >= oy + tip.height - 8, `box covers tooltip: ${JSON.stringify(box)}`);
+  // The fixture's frame sits at x 1..323, y 11..632 inside the image.
+  assert.ok(box.x <= ox + 6 && box.y <= oy + 14, `box starts at the frame: ${JSON.stringify(box)}`);
+  assert.ok(box.x + box.w >= ox + 318 && box.y + box.h >= oy + 625, `box covers the frame: ${JSON.stringify(box)}`);
   assert.ok(box.w < tip.width + 40 && box.h < tip.height + 40, `box is tight: ${JSON.stringify(box)}`);
 });
 
@@ -160,4 +161,16 @@ test('detects the equipped tooltip text', () => {
   assert.ok(S.isEquippedText('Combat Power Increase\nCurrently Equipped\nArmor'));
   assert.ok(S.isEquippedText('Currentiy Equlpped'));
   assert.ok(!S.isEquippedText('+ 17,548\nArmor'));
+});
+
+test('finds hovered + equipped tooltips on a full game screenshot (touching the inventory and scenery)', () => {
+  const im = decodePng(new URL('./fixtures/fullscreen-hat.png', import.meta.url));
+  for(const opts of [{}, {minW:120, minH:150}]){
+    const panels = S.findPanels(im, opts);
+    assert.equal(panels.length, 2, JSON.stringify(panels));
+    const [a, b] = panels;
+    assert.ok(Math.abs(a.x - 1269) <= 4 && Math.abs(a.x + a.w - 1592) <= 4, JSON.stringify(a));
+    assert.ok(a.y <= 480 && a.y + a.h >= 1085, JSON.stringify(a));
+    assert.ok(Math.abs(b.x - 1593) <= 4, JSON.stringify(b));
+  }
 });

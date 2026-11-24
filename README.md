@@ -11,3 +11,5 @@ A single-page tool that picks the best Hat / Top / Bottom / Cape / Glove / Shoe 
 Line caps and target sets follow the [Quanah World Utilities](https://altord.github.io/QuanahWorldUtilities/Quanah%20World%20Utilities.htm) 3-Line Assistant.
 
 Tests: `node --test test/parse.test.mjs`
+
+Scanner debugging: run `python tools/debug_server.py`, open http://localhost:8000/?debug and scan as usual. Detection/OCR events go to `debug/scan-log.jsonl` and captured frames to `debug/frames/` (git-ignored, never uploaded).
