@@ -5,6 +5,7 @@ A single-page tool that picks the best Hat / Top / Bottom / Cape / Glove / Shoe 
 - Lines: Dimensional Leap, White Hole, Registry, ATK, Damage, Crit DMG, Pirate, Warrior, Mage, Thief, Bowman (plus "Other" filler)
 - Solves Meta (Post-Nerf) 18/18 and Legacy Registry 18/18 at the same time and shows which one you are closer to
 - Exact dynamic-programming solver, plus a "what to hunt next" list
+- Line priorities (1-10): higher-priority lines are filled first and never traded for lower ones; equal priorities just maximize line count. Presets: "Max total lines" and "Core first" (DL/WH/Registry → ATK → Crit DMG → rest)
 - **Scan from game**: share your MapleStory window and hover over items. Each tooltip is read with OCR (Tesseract.js, in the browser) into a review list you can import. It only reads screen pixels. You can also paste or drop tooltip screenshots. Items already recorded (same slot and same lines, in any order) are skipped automatically, so you can rescan freely.
 - Data stays in your browser (localStorage); export/import backups as JSON
 

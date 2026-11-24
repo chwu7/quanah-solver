@@ -116,6 +116,13 @@ th{font-size:11px;text-transform:uppercase;letter-spacing:.05em;color:var(--mute
 .scan-row select{padding:3px 6px;font-size:12.5px}
 .scan-row .x{margin-left:auto;padding:2px 8px}
 .pill.warn{background:color-mix(in srgb,var(--warn) 18%,transparent);color:var(--warn)}
+.col{display:flex;flex-direction:column;gap:16px;min-width:0}
+.prio-grid{display:grid;grid-template-columns:repeat(auto-fill,minmax(230px,1fr));gap:6px}
+.prio{display:flex;align-items:center;gap:8px;padding:6px 9px;background:var(--panel2);border-radius:8px}
+.prio .tag{min-width:118px}
+.prio input{flex:1;min-width:0;accent-color:var(--accent)}
+.prio b{font-family:"Space Grotesk",sans-serif;min-width:20px;text-align:right}
+.cnt .p{font-size:11px;color:var(--muted);margin-left:auto;margin-right:8px}
 footer{text-align:center;color:var(--muted);font-size:12px;padding:0 16px 24px}
 </style>
 </head>
@@ -124,7 +131,7 @@ footer{text-align:center;color:var(--muted);font-size:12px;padding:0 16px 24px}
   <div class="row spread">
     <div>
       <h1>Quanah 3-Line Solver</h1>
-      <p>Add the Hologram lines on each Hat, Top, Bottom, Cape, Glove and Shoe you own. The solver picks one item per slot to get as close to 18/18 as possible.</p>
+      <p>Add the Hologram lines on each Hat, Top, Bottom, Cape, Glove and Shoe you own. The solver picks one item per slot to get as close to 18/18 as possible, filling your highest-priority lines first.</p>
     </div>
     <div class="row">
       <button id="themeBtn" class="ghost" title="Toggle theme">Theme</button>
@@ -175,11 +182,23 @@ footer{text-align:center;color:var(--muted);font-size:12px;padding:0 16px 24px}
     </div>
   </section>
 
+  <div class="col">
   <section class="card">
     <h2>2. Which set are you closer to?</h2>
     <div class="muted" style="font-size:12.5px;margin-bottom:10px">Both sets are solved from the same items. Go with whichever one you finish first.</div>
     <div id="race"></div>
   </section>
+
+  <section class="card">
+    <h2>3. Line priorities</h2>
+    <div class="row" style="margin-bottom:8px">
+      <label for="presetSel" class="muted">Preset</label>
+      <select id="presetSel"></select>
+    </div>
+    <div class="muted" style="font-size:12.5px;margin-bottom:10px">10 is highest, 1 is lowest. The solver fills higher-priority lines first and never gives one up to fit more lower-priority lines. Lines with the same priority count equally, so it fits as many of them as it can. Set everything equal to just maximize the total line count.</div>
+    <div id="prioList" class="prio-grid"></div>
+  </section>
+  </div>
 
   <section class="card build-card" id="card-meta"></section>
   <section class="card build-card" id="card-registry"></section>
@@ -219,6 +238,14 @@ const BUILDS = {
     t:{...zero(), dl:3, wh:3, reg:3, atk:3, pirate:1, warrior:1, mage:1, thief:1, bowman:1, crit:1}}
 };
 const BUILD_KEYS = Object.keys(BUILDS);
+// Line priorities (1-10, 10 highest). Higher priority is filled first and never traded for lower ones.
+const prioOf = (base, over = {}) => ({...Object.fromEntries(STATS.map(s => [s.k, base])), ...over});
+const PRESETS = {
+  lines: {name:'Max total lines (all equal)', p:prioOf(5)},
+  core: {name:'Core first: DL · WH · Registry → ATK → Crit DMG → rest', p:prioOf(1, {dl:10, wh:10, reg:10, atk:9, crit:8})}
+};
+const validPrio = p => p && typeof p === 'object' && STATS.every(s => Number.isInteger(p[s.k]) && p[s.k] >= 1 && p[s.k] <= 10);
+const presetOf = p => Object.keys(PRESETS).find(k => STATS.every(s => PRESETS[k].p[s.k] === p[s.k])) || 'custom';
 const EXAMPLE = [
   [['dl','atk','crit'],['atk','wh','other']],
   [['wh','reg','dmg'],['dl','crit','dmg']],
@@ -243,10 +270,10 @@ function addItem(slot, lines){
   return {item, added:true};
 }
 const uniq = list => { const seen = new Set(); return list.filter(l => { const k = lineKey(l); if(seen.has(k)) return false; seen.add(k); return true; }); };
-let state = {items:SLOTS.map(() => []), active:0, pending:[]};
+let state = {items:SLOTS.map(() => []), active:0, pending:[], prio:{...PRESETS.lines.p}};
 
 function save(){
-  try{ localStorage.setItem(KEY, JSON.stringify({active:state.active, items:state.items.map(a => a.map(i => i.lines))})); }catch(e){}
+  try{ localStorage.setItem(KEY, JSON.stringify({active:state.active, items:state.items.map(a => a.map(i => i.lines)), prio:state.prio})); }catch(e){}
 }
 function validLines(l){
   if(!Array.isArray(l) || l.length !== 3) return false;
@@ -258,6 +285,7 @@ function loadFrom(raw){
   if(!raw || !Array.isArray(raw.items) || raw.items.length !== SLOTS.length) return false;
   state.items = raw.items.map(a => uniq((Array.isArray(a) ? a : []).filter(validLines)).map(l => mk(l.slice())));
   if(Number.isInteger(raw.active) && raw.active >= 0 && raw.active < SLOTS.length) state.active = raw.active;
+  if(validPrio(raw.prio)) state.prio = Object.fromEntries(STATS.map(s => [s.k, raw.prio[s.k]]));
   return true;
 }
 function load(){
@@ -267,11 +295,13 @@ function load(){
 }
 
 // ---------- solver: DP over capped line counts (mixed-radix state) ----------
-function makeModel(t){
+// value(st) ranks states by priority: each priority level is worth 19x the level below it, and a set has at most
+// 18 lines, so one more line at a higher priority always beats any number of lower-priority lines (lexicographic).
+function makeModel(t, prio){
   const keys = STATS.map(s => s.k).filter(k => t[k] > 0);
-  const IDX = {}, T = [], R = [], M = [];
+  const IDX = {}, T = [], R = [], M = [], W = [];
   let mult = 1, total = 0;
-  keys.forEach((k, i) => { IDX[k] = i; T[i] = t[k]; R[i] = t[k] + 1; M[i] = mult; mult *= R[i]; total += t[k]; });
+  keys.forEach((k, i) => { IDX[k] = i; T[i] = t[k]; R[i] = t[k] + 1; M[i] = mult; mult *= R[i]; total += t[k]; W[i] = 19 ** ((prio[k] || 1) - 1); });
   const add = (st, lines) => {
     for(const k of lines){ const i = IDX[k]; if(i === undefined) continue;
       if(Math.floor(st / M[i]) % R[i] < T[i]) st += M[i]; }
@@ -279,7 +309,8 @@ function makeModel(t){
   };
   const digits = st => T.map((_, i) => Math.floor(st / M[i]) % R[i]);
   const score = st => digits(st).reduce((a, b) => a + b, 0);
-  return {keys, IDX, T, total, add, digits, score};
+  const value = st => digits(st).reduce((a, d, i) => a + d * W[i], 0);
+  return {keys, IDX, T, W, total, add, digits, score, value};
 }
 
 function runDP(model, skip){
@@ -299,12 +330,13 @@ function runDP(model, skip){
 }
 
 function solve(buildKey){
-  const model = makeModel(BUILDS[buildKey].t);
+  const model = makeModel(BUILDS[buildKey].t, state.prio);
   const layers = runDP(model, -1);
   const last = layers[layers.length - 1];
-  let best = -1, bestSt = 0, ways = 0;
-  for(const [st, e] of last){ const sc = model.score(st);
-    if(sc > best){ best = sc; bestSt = st; ways = e.ways; } else if(sc === best) ways += e.ways; }
+  let bestV = -1, bestSt = 0, ways = 0;
+  for(const [st, e] of last){ const v = model.value(st);
+    if(v > bestV){ bestV = v; bestSt = st; ways = e.ways; } else if(v === bestV) ways += e.ways; }
+  const best = model.score(bestSt);
   const picks = Array(SLOTS.length).fill(null);
   let st = bestSt;
   for(let l = layers.length - 1; l >= 0; l--){ const e = layers[l].get(st); picks[e.slot] = e.item; st = e.prev; }
@@ -316,10 +348,12 @@ function solve(buildKey){
   const complete = [], improve = [];
   if(best < model.total) SLOTS.forEach((_, s) => {
     const ls = runDP(model, s); const fin = ls[ls.length - 1];
-    const seen = new Set(); let slotBest = best; const slotOpts = new Map();
+    const seen = new Set(); let slotBest = bestV; const slotOpts = new Map();
+    const wOf = k => model.W[model.IDX[k]];
+    const sumW = ks => ks.reduce((a, k) => a + wOf(k), 0);
     for(const st2 of fin.keys()){
       const d = model.digits(st2);
-      const deficit = model.keys.filter((k, i) => d[i] < model.T[i]);
+      const deficit = model.keys.filter((k, i) => d[i] < model.T[i]).sort((a, b) => wOf(b) - wOf(a));
       const sc2 = model.score(st2);
       const missing = model.total - sc2;
       if(missing <= 3){
@@ -331,17 +365,19 @@ function solve(buildKey){
           continue;
         }
       }
-      const gainTo = sc2 + Math.min(3, deficit.length);
-      if(gainTo > slotBest){ slotBest = gainTo; slotOpts.clear(); }
-      if(gainTo === slotBest && gainTo > best){
-        const combos = deficit.length <= 3 ? [deficit] : choose3(deficit);
+      // The best new item here fills the three highest-priority missing lines.
+      const top = deficit.slice(0, 3), topW = sumW(top);
+      const gainTo = sc2 + top.length, gainV = model.value(st2) + topW;
+      if(gainV > slotBest){ slotBest = gainV; slotOpts.clear(); }
+      if(gainV === slotBest && gainV > bestV){
+        const combos = deficit.length <= 3 ? [deficit] : choose3(deficit).filter(c => sumW(c) === topW);
         for(const c of combos){ const need = c.slice(); while(need.length < 3) need.push('any');
-          slotOpts.set(need.join(','), {slot:s, need, to:gainTo}); }
+          slotOpts.set(need.join(','), {slot:s, need, to:gainTo, v:gainV}); }
       }
     }
     for(const v of slotOpts.values()) improve.push(v);
   });
-  improve.sort((a, b) => b.to - a.to || a.slot - b.slot);
+  improve.sort((a, b) => b.v - a.v || b.to - a.to || a.slot - b.slot);
   return {key:buildKey, model, best, counts:model.digits(bestSt), picks, used, ways, complete, improve};
 }
 function choose3(arr){
@@ -406,7 +442,8 @@ function renderCard(res, lead){
   const rows = SLOTS.map((s, i) => `<tr><td><b>${s}</b></td><td>${picks[i]
     ? `<div class="row" style="gap:5px">${picks[i].lines.map((k, j) => tag(k, used[i][j] ? '' : 'dim')).join('')}</div>`
     : '<span class="muted">— no item —</span>'}</td><td class="muted" style="text-align:right">${picks[i] ? used[i].filter(Boolean).length + '/3' : ''}</td></tr>`).join('');
-  const cnts = model.keys.map((k, i) => `<div class="cnt">${tag(k)}<b class="${counts[i] >= model.T[i] ? 'ok' : 'no'}">${counts[i]}/${model.T[i]}</b></div>`).join('');
+  const showP = presetOf(state.prio) !== 'lines';
+  const cnts = model.keys.map((k, i) => `<div class="cnt">${tag(k)}${showP ? `<span class="p" title="Priority">P${state.prio[k]}</span>` : ''}<b class="${counts[i] >= model.T[i] ? 'ok' : 'no'}">${counts[i]}/${model.T[i]}</b></div>`).join('');
   card.innerHTML = `
     <h2>${esc(BUILDS[res.key].name)}</h2>
     <div class="row spread"><div class="score sm">${best}<small>/${model.total}</small></div>
@@ -434,8 +471,20 @@ function renderHunt(res, box){
   if(!improve.length){ box.innerHTML = '<div class="muted">No single new item can raise your score. Add more items first.</div>'; return; }
   const shown = improve.slice(0, 30);
   box.innerHTML = `<div class="note" style="margin:0 0 6px">No single item can finish the set yet. These are the best upgrades to look for, one item at a time.</div>` +
-    shown.map(h => line(h, `<span class="pill">${best} → ${h.to} (+${h.to - best})</span>`)).join('') +
+    shown.map(h => line(h, `<span class="pill">${best} → ${h.to}${h.to > best ? ` (+${h.to - best})` : ' · higher priority'}</span>`)).join('') +
     (improve.length > shown.length ? `<div class="note">…and ${improve.length - shown.length} more options.</div>` : '');
+}
+
+// Priority editor. Rebuilt only on load, preset change or import so sliders keep focus while dragging.
+function renderPrio(){
+  $('prioList').innerHTML = GROUPS.flatMap(g => g[1]).filter(k => k !== 'other').map(k =>
+    `<div class="prio">${tag(k)}<input type="range" min="1" max="10" step="1" value="${state.prio[k]}" data-prio="${k}" aria-label="${esc(NAME[k])} priority"><b id="pv-${k}">${state.prio[k]}</b></div>`).join('');
+  syncPreset();
+}
+function syncPreset(){
+  const cur = presetOf(state.prio);
+  $('presetSel').innerHTML = Object.entries(PRESETS).map(([k, p]) => `<option value="${k}" ${k === cur ? 'selected' : ''}>${esc(p.name)}</option>`).join('') +
+    (cur === 'custom' ? '<option value="custom" selected>Custom</option>' : '');
 }
 
 function render(){
@@ -462,17 +511,23 @@ document.addEventListener('click', e => {
   }
   else if(t.dataset.del){ const id = +t.dataset.del; state.items[state.active] = state.items[state.active].filter(i => i.id !== id); render(); }
 });
-$('clearPendBtn').onclick = () => { state.pending = []; renderPicker(); };
+$('prioList').addEventListener('input', e => {
+  const k = e.target.dataset.prio; if(!k) return;
+  state.prio[k] = +e.target.value; $('pv-' + k).textContent = e.target.value;
+  syncPreset(); render();
+});
+$('presetSel').onchange = e => { const p = PRESETS[e.target.value]; if(!p) return; state.prio = {...p.p}; renderPrio(); render(); };
+$('clearPendBtn').onclick =() => { state.pending = []; renderPicker(); };
 $('exampleBtn').onclick = () => { if(confirm('Replace your items with the example set?')){ state.items = EXAMPLE.map(a => a.map(l => mk(l.slice()))); render(); } };
 $('clearAllBtn').onclick = () => { if(confirm('Remove every item from every slot?')){ state.items = SLOTS.map(() => []); state.pending = []; render(); } };
 $('exportBtn').onclick = () => {
-  const blob = new Blob([JSON.stringify({items:state.items.map(a => a.map(i => i.lines))}, null, 2)], {type:'application/json'});
+  const blob = new Blob([JSON.stringify({items:state.items.map(a => a.map(i => i.lines)), prio:state.prio}, null, 2)], {type:'application/json'});
   const a = document.createElement('a'); a.href = URL.createObjectURL(blob); a.download = 'quanah-solver-backup.json'; a.click(); URL.revokeObjectURL(a.href);
 };
 $('importBtn').onclick = () => $('importFile').click();
 $('importFile').onchange = async e => {
   const f = e.target.files[0]; if(!f) return;
-  try{ if(!loadFrom(JSON.parse(await f.text()))) throw 0; render(); }catch(err){ alert('That file is not a valid backup.'); }
+  try{ if(!loadFrom(JSON.parse(await f.text()))) throw 0; renderPrio(); render(); }catch(err){ alert('That file is not a valid backup.'); }
   e.target.value = '';
 };
 document.addEventListener('keydown', e => {
@@ -629,6 +684,7 @@ sb.addEventListener('drop', e => {
 });
 
 load();
+renderPrio();
 render();
 </script>
 </body>
