@@ -1,0 +1,420 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Quanah 3-Line Solver</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600&family=Space+Grotesk:wght@500;700&display=swap">
+<style>
+:root{
+  --bg:#f5f6fa; --panel:#ffffff; --panel2:#f0f2f7; --text:#1b1f2a; --muted:#6b7385; --border:#dde1ea;
+  --accent:#5b5bf0; --ok:#1fa67a; --warn:#d98a12; --bad:#e0484d;
+  --c-dl:#7a5cf0; --c-wh:#2f9bd6; --c-reg:#1fa67a; --c-atk:#e0484d; --c-dmg:#d6409f; --c-crit:#e0761f; --c-class:#b8860b; --c-other:#8590a3;
+}
+@media (prefers-color-scheme: dark){
+  :root:not([data-theme="light"]){
+    --bg:#0f1117; --panel:#181b24; --panel2:#20242f; --text:#e7e9ef; --muted:#9097a8; --border:#2c3140;
+    --accent:#8080ff; --c-other:#7a8296;
+  }
+}
+:root[data-theme="dark"]{
+  --bg:#0f1117; --panel:#181b24; --panel2:#20242f; --text:#e7e9ef; --muted:#9097a8; --border:#2c3140;
+  --accent:#8080ff; --c-other:#7a8296;
+}
+*{box-sizing:border-box}
+body{margin:0;background:var(--bg);color:var(--text);font:14px/1.5 Inter,system-ui,sans-serif}
+header{padding:20px 16px 8px;max-width:1150px;margin:0 auto}
+h1{font-family:"Space Grotesk",sans-serif;font-size:24px;margin:0}
+h2{font-family:"Space Grotesk",sans-serif;font-size:16px;margin:0 0 10px}
+header p{margin:4px 0 0;color:var(--muted)}
+main{max-width:1150px;margin:0 auto;padding:8px 16px 40px;display:grid;grid-template-columns:minmax(0,1fr) minmax(0,1fr);gap:16px}
+@media (max-width:860px){main{grid-template-columns:minmax(0,1fr)}}
+.card{background:var(--panel);border:1px solid var(--border);border-radius:12px;padding:16px}
+.full{grid-column:1/-1}
+.row{display:flex;gap:8px;align-items:center;flex-wrap:wrap}
+.spread{justify-content:space-between}
+.muted{color:var(--muted)}
+button{font:inherit;cursor:pointer;border:1px solid var(--border);background:var(--panel2);color:var(--text);border-radius:8px;padding:6px 12px}
+button:hover{border-color:var(--accent)}
+button.primary{background:var(--accent);border-color:var(--accent);color:#fff}
+button.primary:disabled{opacity:.45;cursor:not-allowed}
+button.ghost{background:transparent}
+button.danger:hover{border-color:var(--bad);color:var(--bad)}
+select{font:inherit;background:var(--panel2);color:var(--text);border:1px solid var(--border);border-radius:8px;padding:6px 8px}
+.tabs{display:flex;gap:6px;flex-wrap:wrap;margin-bottom:12px}
+.tab{position:relative}
+.tab.active{background:var(--accent);border-color:var(--accent);color:#fff}
+.tab .n{font-size:11px;opacity:.75;margin-left:4px}
+.chips{display:flex;flex-wrap:wrap;gap:6px}
+.chip{--c:var(--c-other);border:1px solid color-mix(in srgb,var(--c) 45%,var(--border));background:color-mix(in srgb,var(--c) 10%,var(--panel));color:var(--text);border-radius:999px;padding:5px 11px;font-size:13px}
+.chip:hover{background:color-mix(in srgb,var(--c) 22%,var(--panel));border-color:var(--c)}
+.chip:disabled{opacity:.35;cursor:not-allowed}
+.tag{--c:var(--c-other);display:inline-flex;align-items:center;gap:5px;border-radius:6px;padding:2px 8px;font-size:12.5px;font-weight:500;background:color-mix(in srgb,var(--c) 16%,transparent);color:var(--text);border:1px solid color-mix(in srgb,var(--c) 40%,transparent);white-space:nowrap}
+.tag::before{content:"";width:7px;height:7px;border-radius:50%;background:var(--c)}
+.tag.dim{opacity:.4;text-decoration:line-through}
+.tag.empty{border-style:dashed;background:transparent;color:var(--muted)}
+.tag.empty::before{background:transparent;border:1px dashed var(--muted)}
+.s-dl{--c:var(--c-dl)} .s-wh{--c:var(--c-wh)} .s-reg{--c:var(--c-reg)} .s-atk{--c:var(--c-atk)} .s-dmg{--c:var(--c-dmg)} .s-crit{--c:var(--c-crit)}
+.s-pirate,.s-warrior,.s-mage,.s-thief,.s-bowman{--c:var(--c-class)} .s-other,.s-any{--c:var(--c-other)}
+.group-label{font-size:11px;text-transform:uppercase;letter-spacing:.06em;color:var(--muted);margin:10px 0 5px}
+.pending{display:flex;gap:6px;align-items:center;min-height:34px;padding:8px;border:1px dashed var(--border);border-radius:8px;margin:12px 0 8px;flex-wrap:wrap}
+.items{display:flex;flex-direction:column;gap:6px;margin-top:10px}
+.item{display:flex;align-items:center;gap:6px;padding:7px 9px;background:var(--panel2);border-radius:8px;flex-wrap:wrap}
+.item.chosen{outline:2px solid var(--ok)}
+.item .x{margin-left:auto;padding:2px 8px}
+.score{font-family:"Space Grotesk",sans-serif;font-size:44px;font-weight:700;line-height:1}
+.score small{font-size:20px;color:var(--muted)}
+.bar{height:8px;background:var(--panel2);border-radius:99px;overflow:hidden;margin:8px 0 14px}
+.bar>div{height:100%;background:var(--accent);border-radius:99px;transition:width .2s}
+.bar.done>div{background:var(--ok)}
+table{width:100%;border-collapse:collapse}
+td,th{padding:7px 6px;border-bottom:1px solid var(--border);text-align:left;vertical-align:middle}
+th{font-size:11px;text-transform:uppercase;letter-spacing:.05em;color:var(--muted);font-weight:600}
+.counts{display:grid;grid-template-columns:repeat(auto-fill,minmax(150px,1fr));gap:6px}
+.cnt{display:flex;justify-content:space-between;align-items:center;padding:6px 9px;background:var(--panel2);border-radius:8px}
+.cnt b.ok{color:var(--ok)} .cnt b.no{color:var(--warn)}
+.hunt{display:flex;gap:8px;align-items:center;padding:7px 0;border-bottom:1px solid var(--border);flex-wrap:wrap}
+.hunt .slot{font-weight:600;min-width:58px}
+.pill{font-size:11.5px;padding:2px 8px;border-radius:99px;background:var(--panel2);color:var(--muted)}
+.pill.ok{background:color-mix(in srgb,var(--ok) 18%,transparent);color:var(--ok)}
+.targets{display:grid;grid-template-columns:repeat(auto-fill,minmax(160px,1fr));gap:6px;margin-top:10px}
+.targets label{display:flex;justify-content:space-between;align-items:center;gap:6px;padding:4px 8px;background:var(--panel2);border-radius:8px}
+.targets select{padding:2px 6px}
+.note{font-size:12.5px;color:var(--muted);margin-top:8px}
+.table-wrap{overflow-x:auto}
+footer{text-align:center;color:var(--muted);font-size:12px;padding:0 16px 24px}
+</style>
+</head>
+<body>
+<header>
+  <div class="row spread">
+    <div>
+      <h1>Quanah 3-Line Solver</h1>
+      <p>Add the Hologram lines on each Hat, Top, Bottom, Cape, Glove and Shoe you own. The solver picks one item per slot to get as close to 18/18 as possible.</p>
+    </div>
+    <div class="row">
+      <button id="themeBtn" class="ghost" title="Toggle theme">Theme</button>
+    </div>
+  </div>
+</header>
+
+<main>
+  <section class="card full">
+    <div class="row spread">
+      <h2 style="margin:0">Target set</h2>
+      <select id="buildSel"></select>
+    </div>
+    <div id="buildDesc" class="note"></div>
+    <div id="targetEditor" class="targets"></div>
+  </section>
+
+  <section class="card">
+    <h2>1. Add items</h2>
+    <div id="slotTabs" class="tabs"></div>
+    <div class="muted" style="font-size:12.5px">Click 3 lines for a <b id="slotName"></b>. Use <i>Other</i> for lines that don't matter. The same skill can't appear twice on one item.</div>
+    <div id="picker"></div>
+    <div class="pending" id="pending"></div>
+    <div class="row">
+      <button class="primary" id="addBtn">Add item</button>
+      <button id="undoBtn">Undo line</button>
+      <button id="clearPendBtn" class="ghost">Clear</button>
+    </div>
+    <div id="itemList" class="items"></div>
+    <div class="row" style="margin-top:14px;border-top:1px solid var(--border);padding-top:12px">
+      <button id="exampleBtn">Load example</button>
+      <button id="exportBtn">Export backup</button>
+      <button id="importBtn">Import backup</button>
+      <input id="importFile" type="file" accept="application/json,.json" hidden>
+      <button id="clearAllBtn" class="danger">Clear all</button>
+    </div>
+  </section>
+
+  <section class="card">
+    <h2>2. Optimal set</h2>
+    <div id="result"></div>
+  </section>
+
+  <section class="card full">
+    <h2>What to hunt next</h2>
+    <div id="hunt"></div>
+  </section>
+</main>
+<footer>Line caps and target sets follow the Quanah World Utilities 3-Line Assistant. Your data is saved only in this browser.</footer>
+
+<script>
+// ---------- data ----------
+const SLOTS = ['Hat','Top','Bottom','Cape','Glove','Shoe'];
+const STATS = [
+  {k:'dl', n:'Dimensional Leap', s:'DL'},
+  {k:'wh', n:'White Hole', s:'WH'},
+  {k:'reg', n:'Registry', s:'Reg'},
+  {k:'atk', n:'ATK', s:'ATK'},
+  {k:'dmg', n:'Damage', s:'Dmg'},
+  {k:'crit', n:'Crit DMG', s:'Crit'},
+  {k:'pirate', n:'Pirate', s:'Pirate'},
+  {k:'warrior', n:'Warrior', s:'Warrior'},
+  {k:'mage', n:'Mage', s:'Mage'},
+  {k:'thief', n:'Thief', s:'Thief'},
+  {k:'bowman', n:'Bowman', s:'Bowman'}
+];
+const GROUPS = [
+  ['Core skills', ['dl','wh','reg']],
+  ['Enhancements', ['atk','dmg','crit']],
+  ['Class lines', ['pirate','warrior','mage','thief','bowman']],
+  ['Filler', ['other']]
+];
+const NAME = {other:'Other', any:'Any'};
+STATS.forEach(s => NAME[s.k] = s.n);
+const zero = () => Object.fromEntries(STATS.map(s => [s.k, 0]));
+const BUILDS = {
+  meta: {name:'Meta (Post-Nerf) — 18/18', desc:'3 DL, 3 WH, 3 Registry, 3 ATK, 3 Crit DMG, 3 Damage. Leaves out the class skills nerfed by 30%.',
+    t:{...zero(), dl:3, wh:3, reg:3, atk:3, crit:3, dmg:3}},
+  registry: {name:'Legacy Registry — 18/18', desc:'Pre-nerf meta: 3 DL, 3 WH, 3 Registry, 3 ATK, 1 of each class (5), 1 Crit DMG.',
+    t:{...zero(), dl:3, wh:3, reg:3, atk:3, pirate:1, warrior:1, mage:1, thief:1, bowman:1, crit:1}},
+  noclass: {name:'No-Class Crit — 15/18', desc:'3 DL, 3 WH, 3 Registry, 3 ATK, 3 Crit DMG. Leaves 3 lines free.',
+    t:{...zero(), dl:3, wh:3, reg:3, atk:3, crit:3}},
+  custom: {name:'Custom', desc:'Set your own cap for each line. A line only counts up to its cap.', t:null}
+};
+const EXAMPLE = [
+  [['dl','atk','crit'],['atk','wh','other']],
+  [['wh','reg','dmg'],['dl','crit','dmg']],
+  [['reg','dl','dmg']],
+  [['atk','wh','crit'],['dmg','crit','dl']],
+  [['dl','wh','atk'],['crit','wh','reg']],
+  [['atk','reg','dmg']]
+];
+
+// ---------- state ----------
+const KEY = 'quanahSolver.v1';
+let uid = 1;
+const mk = lines => ({id: uid++, lines});
+let state = {build:'meta', custom:{...BUILDS.meta.t}, items:SLOTS.map(() => []), active:0, pending:[]};
+
+function save(){
+  try{ localStorage.setItem(KEY, JSON.stringify({build:state.build, custom:state.custom, active:state.active, items:state.items.map(a => a.map(i => i.lines))})); }catch(e){}
+}
+function validLines(l){
+  if(!Array.isArray(l) || l.length !== 3) return false;
+  if(!l.every(k => k === 'other' || NAME[k])) return false;
+  const real = l.filter(k => k !== 'other');
+  return new Set(real).size === real.length;
+}
+function loadFrom(raw){
+  if(!raw || !Array.isArray(raw.items) || raw.items.length !== SLOTS.length) return false;
+  state.items = raw.items.map(a => (Array.isArray(a) ? a : []).filter(validLines).map(l => mk(l.slice())));
+  if(raw.build && BUILDS[raw.build]) state.build = raw.build;
+  if(raw.custom && typeof raw.custom === 'object'){
+    state.custom = zero();
+    STATS.forEach(s => { const v = +raw.custom[s.k]; state.custom[s.k] = v >= 0 && v <= 3 ? Math.floor(v) : 0; });
+  }
+  if(Number.isInteger(raw.active) && raw.active >= 0 && raw.active < SLOTS.length) state.active = raw.active;
+  return true;
+}
+function load(){
+  let raw = null;
+  try{ raw = JSON.parse(localStorage.getItem(KEY)); }catch(e){}
+  if(!loadFrom(raw)) state.items = EXAMPLE.map(a => a.map(l => mk(l.slice())));
+}
+
+function targets(){ return state.build === 'custom' ? state.custom : BUILDS[state.build].t; }
+
+// ---------- solver: DP over capped line counts (mixed-radix state) ----------
+function makeModel(){
+  const t = targets();
+  const keys = STATS.map(s => s.k).filter(k => t[k] > 0);
+  const IDX = {}, T = [], R = [], M = [];
+  let mult = 1, total = 0;
+  keys.forEach((k, i) => { IDX[k] = i; T[i] = t[k]; R[i] = t[k] + 1; M[i] = mult; mult *= R[i]; total += t[k]; });
+  const add = (st, lines) => {
+    for(const k of lines){ const i = IDX[k]; if(i === undefined) continue;
+      if(Math.floor(st / M[i]) % R[i] < T[i]) st += M[i]; }
+    return st;
+  };
+  const digits = st => T.map((_, i) => Math.floor(st / M[i]) % R[i]);
+  const score = st => digits(st).reduce((a, b) => a + b, 0);
+  return {keys, IDX, T, total, add, digits, score};
+}
+
+function runDP(model, skip){
+  let cur = new Map([[0, {ways:1}]]); const layers = [];
+  SLOTS.forEach((_, s) => {
+    if(s === skip) return;
+    const opts = state.items[s].length ? state.items[s] : [null];
+    const next = new Map();
+    for(const [st, info] of cur) for(const it of opts){
+      const ns = it ? model.add(st, it.lines) : st;
+      const e = next.get(ns);
+      if(e) e.ways += info.ways; else next.set(ns, {prev:st, item:it, slot:s, ways:info.ways});
+    }
+    layers.push(next); cur = next;
+  });
+  return layers;
+}
+
+function solve(){
+  const model = makeModel();
+  const layers = runDP(model, -1);
+  const last = layers[layers.length - 1];
+  let best = -1, bestSt = 0, ways = 0;
+  for(const [st, e] of last){ const sc = model.score(st);
+    if(sc > best){ best = sc; bestSt = st; ways = e.ways; } else if(sc === best) ways += e.ways; }
+  const picks = Array(SLOTS.length).fill(null);
+  let st = bestSt;
+  for(let l = layers.length - 1; l >= 0; l--){ const e = layers[l].get(st); picks[e.slot] = e.item; st = e.prev; }
+  const run = model.T.map(() => 0);
+  const used = picks.map(it => it ? it.lines.map(k => { const i = model.IDX[k];
+    if(i === undefined || run[i] >= model.T[i]) return false; run[i]++; return true; }) : []);
+
+  // Hunt list: for each slot, the best a single new item there could achieve.
+  const complete = [], improve = [];
+  if(best < model.total) SLOTS.forEach((_, s) => {
+    const ls = runDP(model, s); const fin = ls[ls.length - 1];
+    const seen = new Set(); let slotBest = best; const slotOpts = new Map();
+    for(const st2 of fin.keys()){
+      const d = model.digits(st2);
+      const deficit = model.keys.filter((k, i) => d[i] < model.T[i]);
+      const sc2 = model.score(st2);
+      const missing = model.total - sc2;
+      if(missing <= 3){
+        const need = []; model.keys.forEach((k, i) => { for(let j = d[i]; j < model.T[i]; j++) need.push(k); });
+        if(new Set(need).size === need.length){
+          while(need.length < 3) need.push('any');
+          const key = need.join(',');
+          if(!seen.has(key)){ seen.add(key); complete.push({slot:s, need}); }
+          continue;
+        }
+      }
+      const gainTo = sc2 + Math.min(3, deficit.length);
+      if(gainTo > slotBest){ slotBest = gainTo; slotOpts.clear(); }
+      if(gainTo === slotBest && gainTo > best){
+        const combos = deficit.length <= 3 ? [deficit] : choose3(deficit);
+        for(const c of combos){ const need = c.slice(); while(need.length < 3) need.push('any');
+          slotOpts.set(need.join(','), {slot:s, need, to:gainTo}); }
+      }
+    }
+    for(const v of slotOpts.values()) improve.push(v);
+  });
+  improve.sort((a, b) => b.to - a.to || a.slot - b.slot);
+  return {model, best, counts:model.digits(bestSt), picks, used, ways, complete, improve};
+}
+function choose3(arr){
+  const out = [];
+  for(let a = 0; a < arr.length - 2; a++) for(let b = a + 1; b < arr.length - 1; b++) for(let c = b + 1; c < arr.length; c++) out.push([arr[a], arr[b], arr[c]]);
+  return out;
+}
+
+// ---------- render ----------
+const $ = id => document.getElementById(id);
+const esc = s => String(s).replace(/[&<>"]/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[c]));
+const tag = (k, cls = '') => `<span class="tag s-${k} ${cls}">${esc(NAME[k])}</span>`;
+
+function renderBuild(){
+  $('buildSel').innerHTML = Object.entries(BUILDS).map(([k, b]) => `<option value="${k}" ${k === state.build ? 'selected' : ''}>${esc(b.name)}</option>`).join('');
+  $('buildDesc').textContent = BUILDS[state.build].desc;
+  const t = targets();
+  const editable = state.build === 'custom';
+  $('targetEditor').innerHTML = STATS.map(s => `<label class="${t[s.k] ? '' : 'muted'}"><span class="tag s-${s.k}">${esc(s.n)}</span>${
+    editable ? `<select data-k="${s.k}">${[0,1,2,3].map(v => `<option ${v === t[s.k] ? 'selected' : ''}>${v}</option>`).join('')}</select>` : `<b>${t[s.k]}</b>`}</label>`).join('');
+}
+
+function renderPicker(){
+  $('slotTabs').innerHTML = SLOTS.map((s, i) => `<button class="tab ${i === state.active ? 'active' : ''}" data-slot="${i}">${s}<span class="n">${state.items[i].length}</span></button>`).join('');
+  $('slotName').textContent = SLOTS[state.active];
+  const p = state.pending;
+  $('picker').innerHTML = GROUPS.map(([label, keys]) => `<div class="group-label">${label}</div><div class="chips">${
+    keys.map(k => `<button class="chip s-${k}" data-line="${k}" ${p.length >= 3 || (k !== 'other' && p.includes(k)) ? 'disabled' : ''}>${esc(NAME[k])}</button>`).join('')}</div>`).join('');
+  $('pending').innerHTML = [0,1,2].map(i => p[i] ? tag(p[i]) : `<span class="tag empty">Line ${i + 1}</span>`).join('');
+  $('addBtn').disabled = p.length !== 3;
+}
+
+function renderItems(res){
+  const list = state.items[state.active];
+  const chosen = res.picks[state.active];
+  $('itemList').innerHTML = list.length ? list.map(it => `<div class="item ${chosen && chosen.id === it.id ? 'chosen' : ''}">${it.lines.map(k => tag(k)).join('')}${
+    chosen && chosen.id === it.id ? '<span class="pill ok">in best set</span>' : ''}<button class="x ghost danger" data-del="${it.id}" title="Remove">✕</button></div>`).join('')
+    : `<div class="muted">No ${SLOTS[state.active]} items yet.</div>`;
+}
+
+function renderResult(res){
+  const {model, best, counts, picks, used, ways} = res;
+  const done = best === model.total;
+  const rows = SLOTS.map((s, i) => `<tr><td><b>${s}</b></td><td>${picks[i]
+    ? `<div class="row" style="gap:5px">${picks[i].lines.map((k, j) => tag(k, used[i][j] ? '' : 'dim')).join('')}</div>`
+    : '<span class="muted">— no item —</span>'}</td><td class="muted" style="text-align:right">${picks[i] ? used[i].filter(Boolean).length + '/3' : ''}</td></tr>`).join('');
+  const cnts = model.keys.map((k, i) => `<div class="cnt">${tag(k)}<b class="${counts[i] >= model.T[i] ? 'ok' : 'no'}">${counts[i]}/${model.T[i]}</b></div>`).join('');
+  $('result').innerHTML = `
+    <div class="row spread"><div class="score">${best}<small>/${model.total}</small></div>
+      <span class="pill ${done ? 'ok' : ''}">${done ? 'Perfect set!' : (model.total - best) + ' line' + (model.total - best === 1 ? '' : 's') + ' short'}</span></div>
+    <div class="bar ${done ? 'done' : ''}"><div style="width:${model.total ? best / model.total * 100 : 0}%"></div></div>
+    <div class="table-wrap"><table><thead><tr><th>Slot</th><th>Equip this item</th><th style="text-align:right">Counts</th></tr></thead><tbody>${rows}</tbody></table></div>
+    <div class="group-label" style="margin-top:14px">Line totals</div>
+    <div class="counts">${cnts}</div>
+    <div class="note">Crossed-out lines don't add to the score, either because that skill is already at its cap or because it isn't in the target set.${ways > 1 ? ` ${ways} different item combinations reach this score.` : ''}</div>`;
+}
+
+function renderHunt(res){
+  const {model, best, complete, improve} = res;
+  if(best === model.total){ $('hunt').innerHTML = '<div class="muted">You already have a perfect set. Nothing left to hunt.</div>'; return; }
+  const line = (h, extra) => `<div class="hunt"><span class="slot">${SLOTS[h.slot]}</span>${h.need.map(k => tag(k)).join('')}${extra}</div>`;
+  if(complete.length){
+    complete.sort((a, b) => a.slot - b.slot || a.need.filter(k => k === 'any').length - b.need.filter(k => k === 'any').length);
+    $('hunt').innerHTML = `<div class="note" style="margin:0 0 6px">Getting <b>any one</b> of these items finishes the set at <b>${model.total}/${model.total}</b>. "Any" means that line can be anything.</div>` +
+      complete.map(h => line(h, `<span class="pill ok">→ ${model.total}/${model.total}</span>`)).join('');
+    return;
+  }
+  if(!improve.length){ $('hunt').innerHTML = '<div class="muted">No single new item can raise your score. Add more items first.</div>'; return; }
+  const shown = improve.slice(0, 30);
+  $('hunt').innerHTML = `<div class="note" style="margin:0 0 6px">No single item can finish the set yet. These are the best upgrades to look for, one item at a time.</div>` +
+    shown.map(h => line(h, `<span class="pill">${best} → ${h.to} (+${h.to - best})</span>`)).join('') +
+    (improve.length > shown.length ? `<div class="note">…and ${improve.length - shown.length} more options.</div>` : '');
+}
+
+function render(){
+  const res = solve();
+  renderBuild(); renderPicker(); renderItems(res); renderResult(res); renderHunt(res);
+  save();
+}
+
+// ---------- events ----------
+document.addEventListener('click', e => {
+  const t = e.target.closest('button'); if(!t) return;
+  if(t.dataset.slot !== undefined){ state.active = +t.dataset.slot; render(); }
+  else if(t.dataset.line){ if(state.pending.length < 3){ state.pending.push(t.dataset.line); renderPicker(); } }
+  else if(t.dataset.del){ const id = +t.dataset.del; state.items[state.active] = state.items[state.active].filter(i => i.id !== id); render(); }
+});
+$('addBtn').onclick = () => { if(state.pending.length !== 3) return; state.items[state.active].push(mk(state.pending)); state.pending = []; render(); };
+$('undoBtn').onclick = () => { state.pending.pop(); renderPicker(); };
+$('clearPendBtn').onclick = () => { state.pending = []; renderPicker(); };
+$('buildSel').onchange = e => { state.build = e.target.value; render(); };
+$('targetEditor').addEventListener('change', e => { const k = e.target.dataset.k; if(k){ state.custom[k] = +e.target.value; render(); } });
+$('exampleBtn').onclick = () => { if(confirm('Replace your items with the example set?')){ state.items = EXAMPLE.map(a => a.map(l => mk(l.slice()))); render(); } };
+$('clearAllBtn').onclick = () => { if(confirm('Remove every item from every slot?')){ state.items = SLOTS.map(() => []); state.pending = []; render(); } };
+$('exportBtn').onclick = () => {
+  const blob = new Blob([JSON.stringify({build:state.build, custom:state.custom, items:state.items.map(a => a.map(i => i.lines))}, null, 2)], {type:'application/json'});
+  const a = document.createElement('a'); a.href = URL.createObjectURL(blob); a.download = 'quanah-solver-backup.json'; a.click(); URL.revokeObjectURL(a.href);
+};
+$('importBtn').onclick = () => $('importFile').click();
+$('importFile').onchange = async e => {
+  const f = e.target.files[0]; if(!f) return;
+  try{ if(!loadFrom(JSON.parse(await f.text()))) throw 0; render(); }catch(err){ alert('That file is not a valid backup.'); }
+  e.target.value = '';
+};
+document.addEventListener('keydown', e => {
+  if(e.target.tagName === 'SELECT' || e.target.tagName === 'INPUT') return;
+  if(e.key === 'Enter' && state.pending.length === 3) $('addBtn').click();
+  else if(e.key === 'Backspace' && state.pending.length){ e.preventDefault(); $('undoBtn').click(); }
+});
+$('themeBtn').onclick = () => {
+  const root = document.documentElement;
+  const dark = root.dataset.theme ? root.dataset.theme === 'dark' : matchMedia('(prefers-color-scheme: dark)').matches;
+  root.dataset.theme = dark ? 'light' : 'dark';
+  try{ localStorage.setItem(KEY + '.theme', root.dataset.theme); }catch(e){}
+};
+try{ const th = localStorage.getItem(KEY + '.theme'); if(th) document.documentElement.dataset.theme = th; }catch(e){}
+
+load();
+render();
+</script>
+</body>
+</html>
