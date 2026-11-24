@@ -291,7 +291,7 @@ function loadFrom(raw){
 function load(){
   let raw = null;
   try{ raw = JSON.parse(localStorage.getItem(KEY)); }catch(e){}
-  if(!loadFrom(raw)) state.items = EXAMPLE.map(a => a.map(l => mk(l.slice())));
+  if(!loadFrom(raw)) state.items = SLOTS.map(() => []);
 }
 
 // ---------- solver: DP over capped line counts (mixed-radix state) ----------
