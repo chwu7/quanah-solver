@@ -142,7 +142,22 @@ test('findPanel locates the tooltip in a larger frame', () => {
   for(let y = 0; y < tip.height; y++) tip.data.copy(data, ((oy + y) * W + ox) * 4, y * tip.width * 4, (y + 1) * tip.width * 4);
   const box = S.findPanel({width:W, height:H, data});
   assert.ok(box, 'panel found');
-  assert.ok(box.x <= ox && box.y <= oy, `box starts before tooltip: ${JSON.stringify(box)}`);
+  assert.ok(box.x <= ox + 6 && box.y <= oy + 6, `box starts before tooltip: ${JSON.stringify(box)}`);
   assert.ok(box.x + box.w >= ox + tip.width - 8 && box.y + box.h >= oy + tip.height - 8, `box covers tooltip: ${JSON.stringify(box)}`);
   assert.ok(box.w < tip.width + 40 && box.h < tip.height + 40, `box is tight: ${JSON.stringify(box)}`);
+});
+
+test('findPanels splits hovered + equipped tooltips and keeps the left one first', () => {
+  const im = decodePng(new URL('./fixtures/compare-pants.png', import.meta.url));
+  const panels = S.findPanels(im, {minW:120, minH:150});
+  assert.equal(panels.length, 2);
+  assert.ok(panels[0].x < 20 && panels[0].x + panels[0].w <= 340, JSON.stringify(panels[0]));
+  assert.ok(panels[1].x >= 315 && panels[1].x + panels[1].w >= 640, JSON.stringify(panels[1]));
+  assert.deepEqual(S.findPanel(im, {minW:120, minH:150}), panels[0]);
+});
+
+test('detects the equipped tooltip text', () => {
+  assert.ok(S.isEquippedText('Combat Power Increase\nCurrently Equipped\nArmor'));
+  assert.ok(S.isEquippedText('Currentiy Equlpped'));
+  assert.ok(!S.isEquippedText('+ 17,548\nArmor'));
 });

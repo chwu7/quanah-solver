@@ -110,8 +110,8 @@ function parseTooltip(text){
 // Tooltip panel: dark, slightly blue-grey translucent background.
 const isPanel = (r, g, b) => r >= 22 && r <= 80 && g >= 28 && g <= 86 && b >= 34 && b <= 96 && b >= r + 3 && Math.max(r, g, b) - Math.min(r, g, b) <= 34;
 
-// Finds the tooltip's bounding box: the largest connected group of mostly-panel 8x8 blocks.
-function findPanel(img, opts = {}){
+// Finds the tooltip region's bounding box: the largest connected group of mostly-panel 8x8 blocks.
+function findRegion(img, opts = {}){
   const B = opts.block || 8, {width:W, height:H, data:d} = img;
   const bw = Math.floor(W / B), bh = Math.floor(H / B);
   const on = new Uint8Array(bw * bh);
@@ -145,6 +145,45 @@ function findPanel(img, opts = {}){
   if(box.w < minW || box.h < minH || best.count < 0.45 * (best.x1 - best.x0 + 1) * (best.y1 - best.y0 + 1)) return null;
   return box;
 }
+
+// Runs of indices whose panel fraction is at least `min`, as [start, end) pairs.
+function runs(fracs, min){
+  const out = []; let s = -1;
+  fracs.forEach((f, i) => { if(f >= min){ if(s < 0) s = i; } else if(s >= 0){ out.push([s, i]); s = -1; } });
+  if(s >= 0) out.push([s, fracs.length]);
+  return out;
+}
+// Hovering an item shows its tooltip with the equipped item's tooltip beside it. Both panels form one dark
+// region, split by a thin light border where almost no pixel is panel-coloured. Returns each panel, left to right.
+function findPanels(img, opts = {}){
+  const region = findRegion(img, opts); if(!region) return [];
+  const {width:W, data:d} = img, minW = opts.minW || 180, minH = opts.minH || 220;
+  const at = (x, y) => { const i = (y * W + x) * 4; return isPanel(d[i], d[i + 1], d[i + 2]); };
+  const colF = [];
+  for(let x = region.x; x < region.x + region.w; x++){
+    let n = 0, t = 0; for(let y = region.y; y < region.y + region.h; y += 2){ t++; if(at(x, y)) n++; }
+    colF.push(n / t);
+  }
+  const panels = [];
+  for(const [c0, c1] of runs(colF, 0.25)){
+    if(c1 - c0 < minW) continue;
+    const x = region.x + c0, w = c1 - c0;
+    // The two panels can differ in height, so trim each one to its own rows.
+    const rowF = [];
+    for(let y = region.y; y < region.y + region.h; y++){
+      let n = 0, t = 0; for(let xx = x; xx < x + w; xx += 2){ t++; if(at(xx, y)) n++; }
+      rowF.push(n / t);
+    }
+    const rr = runs(rowF, 0.25).sort((a, b) => (b[1] - b[0]) - (a[1] - a[0]))[0];
+    if(!rr || rr[1] - rr[0] < minH) continue;
+    const pad = 3;
+    const bx = Math.max(0, x - pad), by = Math.max(0, region.y + rr[0] - pad);
+    panels.push({x:bx, y:by, w:Math.min(W, x + w + pad) - bx, h:Math.min(img.height, region.y + rr[1] + pad) - by});
+  }
+  return panels.length ? panels : [region];
+}
+const findPanel = (img, opts) => findPanels(img, opts)[0] || null;
+const isEquippedText = t => /curr?ent[il1]y\s*equ[il1]pp?ed/i.test(t);
 
 // Light text on a dark panel -> dark text on white, contrast-stretched, for OCR. Modifies img in place.
 function preprocess(img){
@@ -200,15 +239,23 @@ async function ocrBox(srcCanvas, box, onStatus){
   return {text:data.text, canvas:c};
 }
 
+// OCRs the hovered item's panel. The hovered tooltip is normally the left one, but if that panel says
+// "Currently Equipped" (the game can flip them near the screen edge), read the other one instead.
+async function ocrHovered(srcCanvas, panels, onStatus){
+  let r = await ocrBox(srcCanvas, panels[0], onStatus);
+  if(panels.length > 1 && isEquippedText(r.text)) r = await ocrBox(srcCanvas, panels[1], onStatus);
+  return r;
+}
+
 // Reads one still image (pasted/dropped screenshot).
 async function scanImage(source, onStatus){
   const bmp = source instanceof Blob ? await createImageBitmap(source) : source;
   const c = document.createElement('canvas'); c.width = bmp.width; c.height = bmp.height;
   const g = c.getContext('2d', {willReadFrequently:true}); g.drawImage(bmp, 0, 0);
   const img = g.getImageData(0, 0, c.width, c.height);
-  const box = findPanel(img, {minW:120, minH:150}) || {x:0, y:0, w:c.width, h:c.height};
+  const panels = findPanels(img, {minW:120, minH:150});
   onStatus && onStatus('Reading screenshot…');
-  const r = await ocrBox(c, box, onStatus);
+  const r = await ocrHovered(c, panels.length ? panels : [{x:0, y:0, w:c.width, h:c.height}], onStatus);
   return {...parseTooltip(r.text), text:r.text, preview:r.canvas};
 }
 
@@ -223,7 +270,7 @@ function createLiveScanner({onStatus, onItem, onPreview, onStop, interval = 400}
     if(canvas.width !== W || canvas.height !== H){ canvas.width = W; canvas.height = H; }
     g.drawImage(video, 0, 0);
     const img = g.getImageData(0, 0, W, H);
-    const box = findPanel(img);
+    const panels = findPanels(img), box = panels[0];
     if(!box){ prevThumb = null; onStatus('Watching… hover over an item to show its tooltip.'); return; }
     const t = thumb(img, box);
     // Only read once the tooltip has stopped moving (same as last tick) and it's not the one we just read.
@@ -233,7 +280,7 @@ function createLiveScanner({onStatus, onItem, onPreview, onStop, interval = 400}
     busy = true;
     try{
       onStatus('Reading tooltip…');
-      const r = await ocrBox(canvas, box, onStatus);
+      const r = await ocrHovered(canvas, panels, onStatus);
       lastOcrThumb = t;
       const p = {...parseTooltip(r.text), text:r.text};
       onPreview && onPreview(r.canvas);
@@ -261,7 +308,7 @@ function createLiveScanner({onStatus, onItem, onPreview, onStop, interval = 400}
   };
 }
 
-const api = {parseTooltip, lineKey, findPanel, preprocess, thumb, thumbDiff, lev, scanImage, createLiveScanner};
+const api = {parseTooltip, lineKey, findPanel, findPanels, isEquippedText, preprocess, thumb, thumbDiff, lev, scanImage, createLiveScanner};
 if(typeof module !== 'undefined' && module.exports) module.exports = api;
 else root.Scanner = api;
 })(typeof window !== 'undefined' ? window : globalThis);
