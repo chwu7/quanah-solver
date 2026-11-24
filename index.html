@@ -141,7 +141,7 @@ footer{text-align:center;color:var(--muted);font-size:12px;padding:0 16px 24px}
 
 <main>
   <section class="card">
-    <h2>1. Add items</h2>
+    <h2>1. Add items <span class="muted" id="itemTotal"></span></h2>
     <div id="slotTabs" class="tabs"></div>
     <div class="muted" style="font-size:12.5px">Click 3 lines for a <b id="slotName"></b>. The item is added as soon as you pick the third line. Use <i>Other</i> for lines that don't matter. The same skill can't appear twice on one item.</div>
     <div id="picker"></div>
@@ -394,6 +394,7 @@ const tag = (k, cls = '') => `<span class="tag s-${k} ${cls}">${esc(NAME[k])}</s
 function renderPicker(){
   $('slotTabs').innerHTML = SLOTS.map((s, i) => `<button class="tab ${i === state.active ? 'active' : ''}" data-slot="${i}">${s}<span class="n">${state.items[i].length}</span></button>`).join('');
   $('slotName').textContent = SLOTS[state.active];
+  $('itemTotal').textContent = `(${state.items.reduce((n, a) => n + a.length, 0)})`;
   const p = state.pending;
   $('picker').innerHTML = GROUPS.map(([label, keys]) => `<div class="group-label">${label}</div><div class="chips">${
     keys.map(k => { const n = p.filter(x => x === k).length;
