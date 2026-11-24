@@ -256,55 +256,91 @@ async function scanImage(source, onStatus){
   const panels = findPanels(img, {minW:120, minH:150});
   onStatus && onStatus('Reading screenshot…');
   const r = await ocrHovered(c, panels.length ? panels : [{x:0, y:0, w:c.width, h:c.height}], onStatus);
-  return {...parseTooltip(r.text), text:r.text, preview:r.canvas};
+  return {...parseTooltip(r.text), text:r.text, preview:r.canvas, source:c, panels};
 }
 
-// Live scanner over a screen share. Calls onItem(parsed) each time a settled tooltip is read.
-function createLiveScanner({onStatus, onItem, onPreview, onStop, interval = 400}){
-  let stream = null, video = null, timer = null, busy = false, prevThumb = null, lastOcrThumb = null;
+// Live scanner over a screen share. Calls onItem(parsed) each time a settled tooltip is read, and
+// onFrame(info) for every analysed frame so the page can show what the scanner sees.
+// Frames are pulled straight from the capture track (MediaStreamTrackProcessor) when the browser supports it,
+// which keeps working while the game window covers Chrome; timers and hidden <video> elements get throttled then.
+const sameBox = (a, b) => !!a && !!b && Math.abs(a.x - b.x) <= 6 && Math.abs(a.y - b.y) <= 6 && Math.abs(a.w - b.w) <= 8 && Math.abs(a.h - b.h) <= 8;
+function createLiveScanner({onStatus, onItem, onPreview, onFrame, onStop, interval = 400}){
+  let stream = null, running = false, busy = false, reader = null, video = null, timer = null;
+  let prev = null, lastOcr = null, lastAt = 0, frames = 0, fpsAt = 0, fps = 0;
   const canvas = document.createElement('canvas'), g = canvas.getContext('2d', {willReadFrequently:true});
 
-  async function tick(){
+  // Analyse whatever is currently drawn on the canvas.
+  function analyse(){
+    const W = canvas.width, H = canvas.height;
+    const img = g.getImageData(0, 0, W, H);
+    const panels = findPanels(img), box = panels[0];
+    frames++; const now = performance.now();
+    if(now - fpsAt >= 1000){ fps = frames * 1000 / (now - fpsAt || 1); frames = 0; fpsAt = now; }
+    onFrame && onFrame({canvas, width:W, height:H, panels, fps});
+    if(!box){ prev = null; if(!busy) onStatus('Watching… no tooltip on screen. Hover over an item.'); return; }
+    const t = thumb(img, box);
+    // Read once the tooltip has stopped moving (same place and look as last frame), and not the one just read.
+    const settled = sameBox(box, prev && prev.box) && thumbDiff(t, prev.t) < 12;
+    prev = {box, t};
+    if(!settled || busy || (sameBox(box, lastOcr && lastOcr.box) && thumbDiff(t, lastOcr.t) < 12)) return;
+    busy = true; lastOcr = {box, t};
+    // OCR a snapshot so new frames can keep coming in meanwhile.
+    const snap = document.createElement('canvas'); snap.width = W; snap.height = H; snap.getContext('2d').drawImage(canvas, 0, 0);
+    onStatus('Reading tooltip…');
+    ocrHovered(snap, panels, onStatus).then(r => {
+      const p = {...parseTooltip(r.text), text:r.text};
+      onPreview && onPreview(r.canvas);
+      if(p.lines.length || p.slot >= 0) onItem(p); else onStatus('Found a tooltip but could not read hologram lines from it.');
+    }).catch(e => onStatus('OCR error: ' + e.message)).finally(() => { busy = false; });
+  }
+
+  async function pump(track){
+    reader = new root.MediaStreamTrackProcessor({track}).readable.getReader();
+    while(running){
+      const {value:frame, done} = await reader.read().catch(() => ({done:true}));
+      if(done) break;
+      const now = performance.now();
+      if(busy || now - lastAt < interval){ frame.close(); continue; }
+      lastAt = now;
+      const W = frame.displayWidth, H = frame.displayHeight;
+      if(canvas.width !== W || canvas.height !== H){ canvas.width = W; canvas.height = H; }
+      g.drawImage(frame, 0, 0, W, H); frame.close();
+      try{ analyse(); }catch(e){ onStatus('Scan error: ' + e.message); }
+    }
+  }
+  function tickVideo(){
     if(!video || video.readyState < 2 || busy) return;
     const W = video.videoWidth, H = video.videoHeight; if(!W || !H) return;
     if(canvas.width !== W || canvas.height !== H){ canvas.width = W; canvas.height = H; }
     g.drawImage(video, 0, 0);
-    const img = g.getImageData(0, 0, W, H);
-    const panels = findPanels(img), box = panels[0];
-    if(!box){ prevThumb = null; onStatus('Watching… hover over an item to show its tooltip.'); return; }
-    const t = thumb(img, box);
-    // Only read once the tooltip has stopped moving (same as last tick) and it's not the one we just read.
-    const settled = thumbDiff(t, prevThumb) < 6;
-    prevThumb = t;
-    if(!settled || thumbDiff(t, lastOcrThumb) < 6) return;
-    busy = true;
-    try{
-      onStatus('Reading tooltip…');
-      const r = await ocrHovered(canvas, panels, onStatus);
-      lastOcrThumb = t;
-      const p = {...parseTooltip(r.text), text:r.text};
-      onPreview && onPreview(r.canvas);
-      if(p.lines.length || p.slot >= 0) onItem(p); else onStatus('Tooltip found but no hologram lines read.');
-    }catch(e){ onStatus('OCR error: ' + e.message); }
-    finally{ busy = false; }
+    try{ analyse(); }catch(e){ onStatus('Scan error: ' + e.message); }
   }
 
   return {
     async start(){
-      stream = await navigator.mediaDevices.getDisplayMedia({video:{frameRate:5}, audio:false});
-      video = document.createElement('video'); video.muted = true; video.playsInline = true; video.srcObject = stream;
-      await video.play();
-      stream.getVideoTracks()[0].addEventListener('ended', () => this.stop());
+      stream = await navigator.mediaDevices.getDisplayMedia({
+        video:{displaySurface:'monitor', cursor:'never', width:{ideal:7680}, height:{ideal:4320}, frameRate:{ideal:5, max:10}},
+        audio:false, selfBrowserSurface:'exclude', surfaceSwitching:'include', monitorTypeSurfaces:'include'
+      });
+      const track = stream.getVideoTracks()[0];
+      track.addEventListener('ended', () => this.stop());
+      running = true;
       getWorker(onStatus).then(() => onStatus('Watching… hover over an item to show its tooltip.'), e => onStatus(e.message));
-      timer = setInterval(tick, interval);
+      if(root.MediaStreamTrackProcessor) pump(track);
+      else{
+        video = document.createElement('video'); video.muted = true; video.playsInline = true; video.srcObject = stream;
+        await video.play(); timer = setInterval(tickVideo, interval);
+      }
     },
     stop(){
-      clearInterval(timer); timer = null;
+      if(!running) return;
+      running = false; clearInterval(timer); timer = null;
+      if(reader) reader.cancel().catch(() => {});
       if(stream) stream.getTracks().forEach(t => t.stop());
-      stream = null; video = null; prevThumb = lastOcrThumb = null;
+      stream = null; video = null; reader = null; prev = lastOcr = null;
       onStop && onStop();
     },
-    get running(){ return !!timer; }
+    get running(){ return running; }
   };
 }
 

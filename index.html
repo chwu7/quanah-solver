@@ -105,6 +105,12 @@ th{font-size:11px;text-transform:uppercase;letter-spacing:.05em;color:var(--mute
 @keyframes blink{50%{opacity:.25}}
 .scan-preview{max-width:100%;max-height:180px;border-radius:6px;border:1px solid var(--border);display:none}
 .scan-preview.show{display:block}
+.scan-views{display:flex;gap:10px;flex-wrap:wrap;align-items:flex-start}
+.scan-view{display:none;flex-direction:column;gap:4px;font-size:11.5px;color:var(--muted);min-width:0;flex:1 1 220px}
+.scan-view.show{display:flex}
+.scan-view canvas{max-width:100%;border-radius:6px;border:1px solid var(--border);background:#000}
+.scan-help{font-size:12.5px;color:var(--muted);margin-top:6px}
+.scan-help li{margin:2px 0}
 .scan-row{display:flex;align-items:center;gap:6px;padding:7px 9px;background:var(--panel2);border-radius:8px;flex-wrap:wrap}
 .scan-row.bad{outline:1px solid var(--warn)}
 .scan-row select{padding:3px 6px;font-size:12.5px}
@@ -152,7 +158,16 @@ footer{text-align:center;color:var(--muted);font-size:12px;padding:0 16px 24px}
         <button id="scanClearBtn" class="ghost">Clear found</button>
       </div>
       <div class="scan-status" id="scanStatus">Not scanning.</div>
-      <canvas class="scan-preview" id="scanPreview"></canvas>
+      <div class="scan-views">
+        <div class="scan-view" id="liveView"><span>What the scanner sees</span><canvas id="liveCanvas"></canvas><span id="liveInfo"></span></div>
+        <div class="scan-view" id="readView"><span>Last tooltip read</span><canvas class="scan-preview" id="scanPreview"></canvas></div>
+      </div>
+      <details class="scan-help"><summary>Scanner not picking things up?</summary><ul>
+        <li>In the share dialog, choose the <b>Entire screen</b> tab and pick the monitor the game is on. This works with the game windowed or fullscreen.</li>
+        <li>Check "What the scanner sees" above. When a tooltip is on screen it should have a green box around it. If the picture is black, the game is blocking capture. Run the game windowed or borderless instead of exclusive fullscreen.</li>
+        <li>Keep the mouse still on an item for about half a second so the tooltip can settle.</li>
+        <li>Use Chrome or Edge. Pasting a full-screen screenshot (PrtScn, then Ctrl+V here) runs the same detection, which helps tell capture problems from detection problems.</li>
+      </ul></details>
       <div id="scanList" class="items"></div>
       <div class="row" style="margin-top:10px">
         <button id="scanImportBtn" class="primary" disabled>Import items</button>
@@ -479,6 +494,7 @@ let live = null;
 const scanOk = f => f.slot >= 0 && validLines(f.lines);
 function setScanStatus(msg, isLive){ $('scanStatus').textContent = msg; $('scanStatus').classList.toggle('live', !!isLive); }
 function showPreview(c){
+  $('readView').classList.add('show');
   const p = $('scanPreview'); p.width = c.width; p.height = c.height;
   p.getContext('2d').drawImage(c, 0, 0); p.classList.add('show');
 }
@@ -538,15 +554,26 @@ $('scanBtn').onclick = async () => {
     onStatus: m => setScanStatus(m, true),
     onItem: addFound,
     onPreview: showPreview,
-    onStop: () => { $('scanBtn').textContent = 'Start scan'; setScanStatus('Not scanning.'); }
+    onFrame: drawLive,
+    onStop: () => { $('scanBtn').textContent = 'Start scan'; setScanStatus('Not scanning.'); $('liveView').classList.remove('show'); }
   });
   try{ await live.start(); $('scanBtn').textContent = 'Stop scan'; }
   catch(err){ setScanStatus(err.name === 'NotAllowedError' ? 'Screen share was cancelled.' : 'Could not start: ' + err.message); }
 };
+// Downscaled copy of the captured frame, with the tooltip panels outlined (green = the one that gets read).
+function drawLive({canvas, width, height, panels, fps}){
+  $('liveView').classList.add('show');
+  const c = $('liveCanvas'), scale = Math.min(1, 480 / width);
+  c.width = Math.round(width * scale); c.height = Math.round(height * scale);
+  const g = c.getContext('2d'); g.drawImage(canvas, 0, 0, c.width, c.height);
+  panels.forEach((b, i) => { g.lineWidth = 2; g.strokeStyle = i === 0 ? '#1fd68a' : '#9aa3b5'; g.strokeRect(b.x * scale, b.y * scale, b.w * scale, b.h * scale); });
+  $('liveInfo').textContent = `${fps == null ? 'Screenshot' : 'Capture'} ${width}×${height}${fps == null ? '' : ` · ${fps.toFixed(1)} fps`} · ${panels.length ? `tooltip found (${panels[0].w}×${panels[0].h}${panels.length > 1 ? ', + equipped' : ''})` : 'no tooltip found'}`;
+}
 async function scanFile(file){
   try{
     const r = await Scanner.scanImage(file, m => setScanStatus(m));
     showPreview(r.preview);
+    drawLive({canvas:r.source, width:r.source.width, height:r.source.height, panels:r.panels, fps:null});
     if(r.lines.length || r.slot >= 0) addFound(r); else setScanStatus('No hologram lines found in that image.');
   }catch(err){ setScanStatus('Could not read image: ' + err.message); }
 }
