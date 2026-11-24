@@ -50,6 +50,10 @@ select{font:inherit;background:var(--panel2);color:var(--text);border:1px solid 
 .chip{--c:var(--c-other);border:1px solid color-mix(in srgb,var(--c) 45%,var(--border));background:color-mix(in srgb,var(--c) 10%,var(--panel));color:var(--text);border-radius:999px;padding:5px 11px;font-size:13px}
 .chip:hover{background:color-mix(in srgb,var(--c) 22%,var(--panel));border-color:var(--c)}
 .chip:disabled{opacity:.35;cursor:not-allowed}
+.chip.selected{background:var(--c);border-color:var(--c);color:#fff;font-weight:600}
+.chip.selected:hover{background:color-mix(in srgb,var(--c) 80%,#000)}
+button.tag.unpick{font:inherit;font-size:12.5px;font-weight:500;cursor:pointer;padding:2px 8px}
+button.tag.unpick:hover{border-color:var(--bad)}
 .tag{--c:var(--c-other);display:inline-flex;align-items:center;gap:5px;border-radius:6px;padding:2px 8px;font-size:12.5px;font-weight:500;background:color-mix(in srgb,var(--c) 16%,transparent);color:var(--text);border:1px solid color-mix(in srgb,var(--c) 40%,transparent);white-space:nowrap}
 .tag::before{content:"";width:7px;height:7px;border-radius:50%;background:var(--c)}
 .tag.dim{opacity:.4;text-decoration:line-through}
@@ -71,16 +75,25 @@ select{font:inherit;background:var(--panel2);color:var(--text);border:1px solid 
 table{width:100%;border-collapse:collapse}
 td,th{padding:7px 6px;border-bottom:1px solid var(--border);text-align:left;vertical-align:middle}
 th{font-size:11px;text-transform:uppercase;letter-spacing:.05em;color:var(--muted);font-weight:600}
-.counts{display:grid;grid-template-columns:repeat(auto-fill,minmax(150px,1fr));gap:6px}
+.counts{display:grid;grid-template-columns:repeat(auto-fill,minmax(175px,1fr));gap:6px}
 .cnt{display:flex;justify-content:space-between;align-items:center;padding:6px 9px;background:var(--panel2);border-radius:8px}
 .cnt b.ok{color:var(--ok)} .cnt b.no{color:var(--warn)}
 .hunt{display:flex;gap:8px;align-items:center;padding:7px 0;border-bottom:1px solid var(--border);flex-wrap:wrap}
 .hunt .slot{font-weight:600;min-width:58px}
 .pill{font-size:11.5px;padding:2px 8px;border-radius:99px;background:var(--panel2);color:var(--muted)}
 .pill.ok{background:color-mix(in srgb,var(--ok) 18%,transparent);color:var(--ok)}
-.targets{display:grid;grid-template-columns:repeat(auto-fill,minmax(160px,1fr));gap:6px;margin-top:10px}
-.targets label{display:flex;justify-content:space-between;align-items:center;gap:6px;padding:4px 8px;background:var(--panel2);border-radius:8px}
-.targets select{padding:2px 6px}
+.race{padding:12px;border:1px solid var(--border);border-radius:10px;margin-bottom:10px}
+.race.lead{border-color:var(--accent);background:color-mix(in srgb,var(--accent) 7%,var(--panel))}
+.race.won{border-color:var(--ok);background:color-mix(in srgb,var(--ok) 9%,var(--panel))}
+.race .nm{font-family:"Space Grotesk",sans-serif;font-weight:700;font-size:15px}
+.race .sc{font-family:"Space Grotesk",sans-serif;font-weight:700;font-size:26px}
+.race .bar{margin:6px 0 4px}
+.build-card.lead{border-color:var(--accent)}
+.build-card.won{border-color:var(--ok)}
+.score.sm{font-size:34px}
+.pill.lead{background:color-mix(in srgb,var(--accent) 18%,transparent);color:var(--accent)}
+.pill.meta{background:color-mix(in srgb,var(--c-dl) 18%,transparent);color:var(--c-dl)}
+.pill.registry{background:color-mix(in srgb,var(--c-reg) 18%,transparent);color:var(--c-reg)}
 .note{font-size:12.5px;color:var(--muted);margin-top:8px}
 .table-wrap{overflow-x:auto}
 footer{text-align:center;color:var(--muted);font-size:12px;padding:0 16px 24px}
@@ -100,15 +113,6 @@ footer{text-align:center;color:var(--muted);font-size:12px;padding:0 16px 24px}
 </header>
 
 <main>
-  <section class="card full">
-    <div class="row spread">
-      <h2 style="margin:0">Target set</h2>
-      <select id="buildSel"></select>
-    </div>
-    <div id="buildDesc" class="note"></div>
-    <div id="targetEditor" class="targets"></div>
-  </section>
-
   <section class="card">
     <h2>1. Add items</h2>
     <div id="slotTabs" class="tabs"></div>
@@ -117,7 +121,6 @@ footer{text-align:center;color:var(--muted);font-size:12px;padding:0 16px 24px}
     <div class="pending" id="pending"></div>
     <div class="row">
       <button class="primary" id="addBtn">Add item</button>
-      <button id="undoBtn">Undo line</button>
       <button id="clearPendBtn" class="ghost">Clear</button>
     </div>
     <div id="itemList" class="items"></div>
@@ -131,14 +134,13 @@ footer{text-align:center;color:var(--muted);font-size:12px;padding:0 16px 24px}
   </section>
 
   <section class="card">
-    <h2>2. Optimal set</h2>
-    <div id="result"></div>
+    <h2>2. Which set are you closer to?</h2>
+    <div class="muted" style="font-size:12.5px;margin-bottom:10px">Both sets are solved from the same items. Go with whichever one you finish first.</div>
+    <div id="race"></div>
   </section>
 
-  <section class="card full">
-    <h2>What to hunt next</h2>
-    <div id="hunt"></div>
-  </section>
+  <section class="card build-card" id="card-meta"></section>
+  <section class="card build-card" id="card-registry"></section>
 </main>
 <footer>Line caps and target sets follow the Quanah World Utilities 3-Line Assistant. Your data is saved only in this browser.</footer>
 
@@ -168,14 +170,12 @@ const NAME = {other:'Other', any:'Any'};
 STATS.forEach(s => NAME[s.k] = s.n);
 const zero = () => Object.fromEntries(STATS.map(s => [s.k, 0]));
 const BUILDS = {
-  meta: {name:'Meta (Post-Nerf) — 18/18', desc:'3 DL, 3 WH, 3 Registry, 3 ATK, 3 Crit DMG, 3 Damage. Leaves out the class skills nerfed by 30%.',
+  meta: {name:'Meta (Post-Nerf)', short:'Meta', desc:'3 DL · 3 WH · 3 Registry · 3 ATK · 3 Crit DMG · 3 Damage',
     t:{...zero(), dl:3, wh:3, reg:3, atk:3, crit:3, dmg:3}},
-  registry: {name:'Legacy Registry — 18/18', desc:'Pre-nerf meta: 3 DL, 3 WH, 3 Registry, 3 ATK, 1 of each class (5), 1 Crit DMG.',
-    t:{...zero(), dl:3, wh:3, reg:3, atk:3, pirate:1, warrior:1, mage:1, thief:1, bowman:1, crit:1}},
-  noclass: {name:'No-Class Crit — 15/18', desc:'3 DL, 3 WH, 3 Registry, 3 ATK, 3 Crit DMG. Leaves 3 lines free.',
-    t:{...zero(), dl:3, wh:3, reg:3, atk:3, crit:3}},
-  custom: {name:'Custom', desc:'Set your own cap for each line. A line only counts up to its cap.', t:null}
+  registry: {name:'Legacy Registry', short:'Legacy', desc:'3 DL · 3 WH · 3 Registry · 3 ATK · 1 each class (5) · 1 Crit DMG',
+    t:{...zero(), dl:3, wh:3, reg:3, atk:3, pirate:1, warrior:1, mage:1, thief:1, bowman:1, crit:1}}
 };
+const BUILD_KEYS = Object.keys(BUILDS);
 const EXAMPLE = [
   [['dl','atk','crit'],['atk','wh','other']],
   [['wh','reg','dmg'],['dl','crit','dmg']],
@@ -189,10 +189,10 @@ const EXAMPLE = [
 const KEY = 'quanahSolver.v1';
 let uid = 1;
 const mk = lines => ({id: uid++, lines});
-let state = {build:'meta', custom:{...BUILDS.meta.t}, items:SLOTS.map(() => []), active:0, pending:[]};
+let state = {items:SLOTS.map(() => []), active:0, pending:[]};
 
 function save(){
-  try{ localStorage.setItem(KEY, JSON.stringify({build:state.build, custom:state.custom, active:state.active, items:state.items.map(a => a.map(i => i.lines))})); }catch(e){}
+  try{ localStorage.setItem(KEY, JSON.stringify({active:state.active, items:state.items.map(a => a.map(i => i.lines))})); }catch(e){}
 }
 function validLines(l){
   if(!Array.isArray(l) || l.length !== 3) return false;
@@ -203,11 +203,6 @@ function validLines(l){
 function loadFrom(raw){
   if(!raw || !Array.isArray(raw.items) || raw.items.length !== SLOTS.length) return false;
   state.items = raw.items.map(a => (Array.isArray(a) ? a : []).filter(validLines).map(l => mk(l.slice())));
-  if(raw.build && BUILDS[raw.build]) state.build = raw.build;
-  if(raw.custom && typeof raw.custom === 'object'){
-    state.custom = zero();
-    STATS.forEach(s => { const v = +raw.custom[s.k]; state.custom[s.k] = v >= 0 && v <= 3 ? Math.floor(v) : 0; });
-  }
   if(Number.isInteger(raw.active) && raw.active >= 0 && raw.active < SLOTS.length) state.active = raw.active;
   return true;
 }
@@ -217,11 +212,8 @@ function load(){
   if(!loadFrom(raw)) state.items = EXAMPLE.map(a => a.map(l => mk(l.slice())));
 }
 
-function targets(){ return state.build === 'custom' ? state.custom : BUILDS[state.build].t; }
-
 // ---------- solver: DP over capped line counts (mixed-radix state) ----------
-function makeModel(){
-  const t = targets();
+function makeModel(t){
   const keys = STATS.map(s => s.k).filter(k => t[k] > 0);
   const IDX = {}, T = [], R = [], M = [];
   let mult = 1, total = 0;
@@ -252,8 +244,8 @@ function runDP(model, skip){
   return layers;
 }
 
-function solve(){
-  const model = makeModel();
+function solve(buildKey){
+  const model = makeModel(BUILDS[buildKey].t);
   const layers = runDP(model, -1);
   const last = layers[layers.length - 1];
   let best = -1, bestSt = 0, ways = 0;
@@ -296,7 +288,7 @@ function solve(){
     for(const v of slotOpts.values()) improve.push(v);
   });
   improve.sort((a, b) => b.to - a.to || a.slot - b.slot);
-  return {model, best, counts:model.digits(bestSt), picks, used, ways, complete, improve};
+  return {key:buildKey, model, best, counts:model.digits(bestSt), picks, used, ways, complete, improve};
 }
 function choose3(arr){
   const out = [];
@@ -309,70 +301,94 @@ const $ = id => document.getElementById(id);
 const esc = s => String(s).replace(/[&<>"]/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[c]));
 const tag = (k, cls = '') => `<span class="tag s-${k} ${cls}">${esc(NAME[k])}</span>`;
 
-function renderBuild(){
-  $('buildSel').innerHTML = Object.entries(BUILDS).map(([k, b]) => `<option value="${k}" ${k === state.build ? 'selected' : ''}>${esc(b.name)}</option>`).join('');
-  $('buildDesc').textContent = BUILDS[state.build].desc;
-  const t = targets();
-  const editable = state.build === 'custom';
-  $('targetEditor').innerHTML = STATS.map(s => `<label class="${t[s.k] ? '' : 'muted'}"><span class="tag s-${s.k}">${esc(s.n)}</span>${
-    editable ? `<select data-k="${s.k}">${[0,1,2,3].map(v => `<option ${v === t[s.k] ? 'selected' : ''}>${v}</option>`).join('')}</select>` : `<b>${t[s.k]}</b>`}</label>`).join('');
-}
-
 function renderPicker(){
   $('slotTabs').innerHTML = SLOTS.map((s, i) => `<button class="tab ${i === state.active ? 'active' : ''}" data-slot="${i}">${s}<span class="n">${state.items[i].length}</span></button>`).join('');
   $('slotName').textContent = SLOTS[state.active];
   const p = state.pending;
   $('picker').innerHTML = GROUPS.map(([label, keys]) => `<div class="group-label">${label}</div><div class="chips">${
-    keys.map(k => `<button class="chip s-${k}" data-line="${k}" ${p.length >= 3 || (k !== 'other' && p.includes(k)) ? 'disabled' : ''}>${esc(NAME[k])}</button>`).join('')}</div>`).join('');
-  $('pending').innerHTML = [0,1,2].map(i => p[i] ? tag(p[i]) : `<span class="tag empty">Line ${i + 1}</span>`).join('');
+    keys.map(k => { const n = p.filter(x => x === k).length;
+      return `<button class="chip s-${k} ${n ? 'selected' : ''}" data-line="${k}" ${p.length >= 3 && !n ? 'disabled' : ''} title="${n ? 'Click to deselect' : ''}">${esc(NAME[k])}${n > 1 ? ' ×' + n : ''}</button>`; }).join('')}</div>`).join('');
+  $('pending').innerHTML = [0,1,2].map(i => p[i]
+    ? `<button class="tag s-${p[i]} unpick" data-unpick="${i}" title="Click to remove">${esc(NAME[p[i]])} <span aria-hidden="true">✕</span></button>`
+    : `<span class="tag empty">Line ${i + 1}</span>`).join('');
   $('addBtn').disabled = p.length !== 3;
 }
 
-function renderItems(res){
+function renderItems(results){
   const list = state.items[state.active];
-  const chosen = res.picks[state.active];
-  $('itemList').innerHTML = list.length ? list.map(it => `<div class="item ${chosen && chosen.id === it.id ? 'chosen' : ''}">${it.lines.map(k => tag(k)).join('')}${
-    chosen && chosen.id === it.id ? '<span class="pill ok">in best set</span>' : ''}<button class="x ghost danger" data-del="${it.id}" title="Remove">✕</button></div>`).join('')
-    : `<div class="muted">No ${SLOTS[state.active]} items yet.</div>`;
+  $('itemList').innerHTML = list.length ? list.map(it => {
+    const inSets = results.filter(r => r.picks[state.active] && r.picks[state.active].id === it.id);
+    return `<div class="item ${inSets.length ? 'chosen' : ''}">${it.lines.map(k => tag(k)).join('')}${
+      inSets.map(r => `<span class="pill ${r.key}">${BUILDS[r.key].short}</span>`).join('')}<button class="x ghost danger" data-del="${it.id}" title="Remove">✕</button></div>`;
+  }).join('') : `<div class="muted">No ${SLOTS[state.active]} items yet.</div>`;
 }
 
-function renderResult(res){
+// Which set is closer: fewer missing lines wins; ties go to the set with more one-item finishes.
+function leader(results){
+  const [a, b] = results;
+  const ma = a.model.total - a.best, mb = b.model.total - b.best;
+  if(ma !== mb) return ma < mb ? a.key : b.key;
+  if(a.complete.length !== b.complete.length) return a.complete.length > b.complete.length ? a.key : b.key;
+  return null;
+}
+
+function renderRace(results, lead){
+  $('race').innerHTML = results.map(r => {
+    const done = r.best === r.model.total, miss = r.model.total - r.best;
+    const status = done ? '<span class="pill ok">Complete!</span>'
+      : `<span class="pill ${r.key === lead ? 'lead' : ''}">${r.key === lead ? 'Closer · ' : ''}${miss} line${miss === 1 ? '' : 's'} short${r.complete.length ? ' · 1 item away' : ''}</span>`;
+    return `<div class="race ${done ? 'won' : r.key === lead ? 'lead' : ''}">
+      <div class="row spread"><span class="nm">${esc(BUILDS[r.key].name)}</span><span class="sc">${r.best}<span class="muted" style="font-size:16px">/${r.model.total}</span></span></div>
+      <div class="bar ${done ? 'done' : ''}"><div style="width:${r.best / r.model.total * 100}%"></div></div>
+      <div class="row spread"><span class="muted" style="font-size:12px">${esc(BUILDS[r.key].desc)}</span>${status}</div></div>`;
+  }).join('');
+}
+
+function renderCard(res, lead){
   const {model, best, counts, picks, used, ways} = res;
   const done = best === model.total;
+  const card = $('card-' + res.key);
+  card.className = 'card build-card' + (done ? ' won' : res.key === lead ? ' lead' : '');
   const rows = SLOTS.map((s, i) => `<tr><td><b>${s}</b></td><td>${picks[i]
     ? `<div class="row" style="gap:5px">${picks[i].lines.map((k, j) => tag(k, used[i][j] ? '' : 'dim')).join('')}</div>`
     : '<span class="muted">— no item —</span>'}</td><td class="muted" style="text-align:right">${picks[i] ? used[i].filter(Boolean).length + '/3' : ''}</td></tr>`).join('');
   const cnts = model.keys.map((k, i) => `<div class="cnt">${tag(k)}<b class="${counts[i] >= model.T[i] ? 'ok' : 'no'}">${counts[i]}/${model.T[i]}</b></div>`).join('');
-  $('result').innerHTML = `
-    <div class="row spread"><div class="score">${best}<small>/${model.total}</small></div>
+  card.innerHTML = `
+    <h2>${esc(BUILDS[res.key].name)}</h2>
+    <div class="row spread"><div class="score sm">${best}<small>/${model.total}</small></div>
       <span class="pill ${done ? 'ok' : ''}">${done ? 'Perfect set!' : (model.total - best) + ' line' + (model.total - best === 1 ? '' : 's') + ' short'}</span></div>
     <div class="bar ${done ? 'done' : ''}"><div style="width:${model.total ? best / model.total * 100 : 0}%"></div></div>
     <div class="table-wrap"><table><thead><tr><th>Slot</th><th>Equip this item</th><th style="text-align:right">Counts</th></tr></thead><tbody>${rows}</tbody></table></div>
     <div class="group-label" style="margin-top:14px">Line totals</div>
     <div class="counts">${cnts}</div>
-    <div class="note">Crossed-out lines don't add to the score, either because that skill is already at its cap or because it isn't in the target set.${ways > 1 ? ` ${ways} different item combinations reach this score.` : ''}</div>`;
+    <div class="note">Crossed-out lines don't add to the score, either because that skill is already at its cap or because it isn't in this set.${ways > 1 ? ` ${ways} different item combinations reach this score.` : ''}</div>
+    <div class="group-label" style="margin-top:16px">What to hunt next</div>
+    <div class="hunt-box"></div>`;
+  renderHunt(res, card.querySelector('.hunt-box'));
 }
 
-function renderHunt(res){
+function renderHunt(res, box){
   const {model, best, complete, improve} = res;
-  if(best === model.total){ $('hunt').innerHTML = '<div class="muted">You already have a perfect set. Nothing left to hunt.</div>'; return; }
+  if(best === model.total){ box.innerHTML = '<div class="muted">You already have a perfect set. Nothing left to hunt.</div>'; return; }
   const line = (h, extra) => `<div class="hunt"><span class="slot">${SLOTS[h.slot]}</span>${h.need.map(k => tag(k)).join('')}${extra}</div>`;
   if(complete.length){
     complete.sort((a, b) => a.slot - b.slot || a.need.filter(k => k === 'any').length - b.need.filter(k => k === 'any').length);
-    $('hunt').innerHTML = `<div class="note" style="margin:0 0 6px">Getting <b>any one</b> of these items finishes the set at <b>${model.total}/${model.total}</b>. "Any" means that line can be anything.</div>` +
+    box.innerHTML = `<div class="note" style="margin:0 0 6px">Getting <b>any one</b> of these items finishes the set at <b>${model.total}/${model.total}</b>. "Any" means that line can be anything.</div>` +
       complete.map(h => line(h, `<span class="pill ok">→ ${model.total}/${model.total}</span>`)).join('');
     return;
   }
-  if(!improve.length){ $('hunt').innerHTML = '<div class="muted">No single new item can raise your score. Add more items first.</div>'; return; }
+  if(!improve.length){ box.innerHTML = '<div class="muted">No single new item can raise your score. Add more items first.</div>'; return; }
   const shown = improve.slice(0, 30);
-  $('hunt').innerHTML = `<div class="note" style="margin:0 0 6px">No single item can finish the set yet. These are the best upgrades to look for, one item at a time.</div>` +
+  box.innerHTML = `<div class="note" style="margin:0 0 6px">No single item can finish the set yet. These are the best upgrades to look for, one item at a time.</div>` +
     shown.map(h => line(h, `<span class="pill">${best} → ${h.to} (+${h.to - best})</span>`)).join('') +
     (improve.length > shown.length ? `<div class="note">…and ${improve.length - shown.length} more options.</div>` : '');
 }
 
 function render(){
-  const res = solve();
-  renderBuild(); renderPicker(); renderItems(res); renderResult(res); renderHunt(res);
+  const results = BUILD_KEYS.map(solve);
+  const lead = leader(results);
+  renderPicker(); renderItems(results); renderRace(results, lead);
+  results.forEach(r => renderCard(r, lead));
   save();
 }
 
@@ -380,18 +396,22 @@ function render(){
 document.addEventListener('click', e => {
   const t = e.target.closest('button'); if(!t) return;
   if(t.dataset.slot !== undefined){ state.active = +t.dataset.slot; render(); }
-  else if(t.dataset.line){ if(state.pending.length < 3){ state.pending.push(t.dataset.line); renderPicker(); } }
+  else if(t.dataset.unpick !== undefined){ state.pending.splice(+t.dataset.unpick, 1); renderPicker(); }
+  else if(t.dataset.line){
+    const k = t.dataset.line, p = state.pending, at = p.lastIndexOf(k);
+    // Selected skills toggle off; "Other" can repeat, so it only toggles off once all 3 lines are filled.
+    if(at >= 0 && (k !== 'other' || p.length >= 3)) p.splice(at, 1);
+    else if(p.length < 3) p.push(k);
+    renderPicker();
+  }
   else if(t.dataset.del){ const id = +t.dataset.del; state.items[state.active] = state.items[state.active].filter(i => i.id !== id); render(); }
 });
 $('addBtn').onclick = () => { if(state.pending.length !== 3) return; state.items[state.active].push(mk(state.pending)); state.pending = []; render(); };
-$('undoBtn').onclick = () => { state.pending.pop(); renderPicker(); };
 $('clearPendBtn').onclick = () => { state.pending = []; renderPicker(); };
-$('buildSel').onchange = e => { state.build = e.target.value; render(); };
-$('targetEditor').addEventListener('change', e => { const k = e.target.dataset.k; if(k){ state.custom[k] = +e.target.value; render(); } });
 $('exampleBtn').onclick = () => { if(confirm('Replace your items with the example set?')){ state.items = EXAMPLE.map(a => a.map(l => mk(l.slice()))); render(); } };
 $('clearAllBtn').onclick = () => { if(confirm('Remove every item from every slot?')){ state.items = SLOTS.map(() => []); state.pending = []; render(); } };
 $('exportBtn').onclick = () => {
-  const blob = new Blob([JSON.stringify({build:state.build, custom:state.custom, items:state.items.map(a => a.map(i => i.lines))}, null, 2)], {type:'application/json'});
+  const blob = new Blob([JSON.stringify({items:state.items.map(a => a.map(i => i.lines))}, null, 2)], {type:'application/json'});
   const a = document.createElement('a'); a.href = URL.createObjectURL(blob); a.download = 'quanah-solver-backup.json'; a.click(); URL.revokeObjectURL(a.href);
 };
 $('importBtn').onclick = () => $('importFile').click();
@@ -403,7 +423,7 @@ $('importFile').onchange = async e => {
 document.addEventListener('keydown', e => {
   if(e.target.tagName === 'SELECT' || e.target.tagName === 'INPUT') return;
   if(e.key === 'Enter' && state.pending.length === 3) $('addBtn').click();
-  else if(e.key === 'Backspace' && state.pending.length){ e.preventDefault(); $('undoBtn').click(); }
+  else if(e.key === 'Backspace' && state.pending.length){ e.preventDefault(); state.pending.pop(); renderPicker(); }
 });
 $('themeBtn').onclick = () => {
   const root = document.documentElement;
