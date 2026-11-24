@@ -66,6 +66,8 @@ button.tag.unpick:hover{border-color:var(--bad)}
 .items{display:flex;flex-direction:column;gap:6px;margin-top:10px}
 .item{display:flex;align-items:center;gap:6px;padding:7px 9px;background:var(--panel2);border-radius:8px;flex-wrap:wrap}
 .item.chosen{outline:2px solid var(--ok)}
+.item.new{animation:added 1.2s ease-out}
+@keyframes added{0%{background:color-mix(in srgb,var(--accent) 35%,var(--panel2))}100%{background:var(--panel2)}}
 .item .x{margin-left:auto;padding:2px 8px}
 .score{font-family:"Space Grotesk",sans-serif;font-size:44px;font-weight:700;line-height:1}
 .score small{font-size:20px;color:var(--muted)}
@@ -116,11 +118,10 @@ footer{text-align:center;color:var(--muted);font-size:12px;padding:0 16px 24px}
   <section class="card">
     <h2>1. Add items</h2>
     <div id="slotTabs" class="tabs"></div>
-    <div class="muted" style="font-size:12.5px">Click 3 lines for a <b id="slotName"></b>. Use <i>Other</i> for lines that don't matter. The same skill can't appear twice on one item.</div>
+    <div class="muted" style="font-size:12.5px">Click 3 lines for a <b id="slotName"></b>. The item is added as soon as you pick the third line. Use <i>Other</i> for lines that don't matter. The same skill can't appear twice on one item.</div>
     <div id="picker"></div>
     <div class="pending" id="pending"></div>
     <div class="row">
-      <button class="primary" id="addBtn">Add item</button>
       <button id="clearPendBtn" class="ghost">Clear</button>
     </div>
     <div id="itemList" class="items"></div>
@@ -188,6 +189,7 @@ const EXAMPLE = [
 // ---------- state ----------
 const KEY = 'quanahSolver.v1';
 let uid = 1;
+let flashAdded = false;
 const mk = lines => ({id: uid++, lines});
 let state = {items:SLOTS.map(() => []), active:0, pending:[]};
 
@@ -311,14 +313,15 @@ function renderPicker(){
   $('pending').innerHTML = [0,1,2].map(i => p[i]
     ? `<button class="tag s-${p[i]} unpick" data-unpick="${i}" title="Click to remove">${esc(NAME[p[i]])} <span aria-hidden="true">✕</span></button>`
     : `<span class="tag empty">Line ${i + 1}</span>`).join('');
-  $('addBtn').disabled = p.length !== 3;
 }
 
 function renderItems(results){
   const list = state.items[state.active];
+  const newId = flashAdded && list.length ? list[list.length - 1].id : null;
+  flashAdded = false;
   $('itemList').innerHTML = list.length ? list.map(it => {
     const inSets = results.filter(r => r.picks[state.active] && r.picks[state.active].id === it.id);
-    return `<div class="item ${inSets.length ? 'chosen' : ''}">${it.lines.map(k => tag(k)).join('')}${
+    return `<div class="item ${inSets.length ? 'chosen' : ''} ${it.id === newId ? 'new' : ''}">${it.lines.map(k => tag(k)).join('')}${
       inSets.map(r => `<span class="pill ${r.key}">${BUILDS[r.key].short}</span>`).join('')}<button class="x ghost danger" data-del="${it.id}" title="Remove">✕</button></div>`;
   }).join('') : `<div class="muted">No ${SLOTS[state.active]} items yet.</div>`;
 }
@@ -399,14 +402,15 @@ document.addEventListener('click', e => {
   else if(t.dataset.unpick !== undefined){ state.pending.splice(+t.dataset.unpick, 1); renderPicker(); }
   else if(t.dataset.line){
     const k = t.dataset.line, p = state.pending, at = p.lastIndexOf(k);
-    // Selected skills toggle off; "Other" can repeat, so it only toggles off once all 3 lines are filled.
-    if(at >= 0 && (k !== 'other' || p.length >= 3)) p.splice(at, 1);
+    // Selected skills toggle off; "Other" can repeat, so clicking it always adds another.
+    if(at >= 0 && k !== 'other') p.splice(at, 1);
     else if(p.length < 3) p.push(k);
-    renderPicker();
+    // The third line completes the item: add it to the pool right away.
+    if(p.length === 3){ state.items[state.active].push(mk(p.slice())); state.pending = []; flashAdded = true; render(); }
+    else renderPicker();
   }
   else if(t.dataset.del){ const id = +t.dataset.del; state.items[state.active] = state.items[state.active].filter(i => i.id !== id); render(); }
 });
-$('addBtn').onclick = () => { if(state.pending.length !== 3) return; state.items[state.active].push(mk(state.pending)); state.pending = []; render(); };
 $('clearPendBtn').onclick = () => { state.pending = []; renderPicker(); };
 $('exampleBtn').onclick = () => { if(confirm('Replace your items with the example set?')){ state.items = EXAMPLE.map(a => a.map(l => mk(l.slice()))); render(); } };
 $('clearAllBtn').onclick = () => { if(confirm('Remove every item from every slot?')){ state.items = SLOTS.map(() => []); state.pending = []; render(); } };
@@ -422,8 +426,7 @@ $('importFile').onchange = async e => {
 };
 document.addEventListener('keydown', e => {
   if(e.target.tagName === 'SELECT' || e.target.tagName === 'INPUT') return;
-  if(e.key === 'Enter' && state.pending.length === 3) $('addBtn').click();
-  else if(e.key === 'Backspace' && state.pending.length){ e.preventDefault(); state.pending.pop(); renderPicker(); }
+  if(e.key === 'Backspace' && state.pending.length){ e.preventDefault(); state.pending.pop(); renderPicker(); }
 });
 $('themeBtn').onclick = () => {
   const root = document.documentElement;
