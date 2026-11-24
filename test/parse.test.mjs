@@ -33,7 +33,49 @@ test('parses the sample shoes tooltip', () => {
   assert.deepEqual(p.issues, []);
 });
 
+// Real Tesseract hologram blocks from the other fixtures (note "Ly." misreads, "Level", and a wrapped line).
+const BLOCKS = {
+  'shoes-crit-thief-dl': [5, `Libae's Supercharged Shoes (Warrior)     |
+Jump +16 (7 +3 +6)
+Dimensional Leap Lv. +1
+[Hologram] Critical Damage Enhancement Skill Ly. +1
+[Hologram] Thief Attack Skill Lv. +1
+Scroll Enhancement Mone`, ['dl', 'crit', 'thief']],
+  'top-pirate-mage-warrior': [1, `Libae's Supercharged Top (Warrior)
+Enemy DEF Ignored +5%
+[Hologram] Pirate Attack Skill Lv. +1
+[Hologram] Magician Attack Skill Ly. +1                   |
+[Hologram] Warrior Attack Skill Level Lv. +1               |
+Scroll Enhancement Mone                        |`, ['pirate', 'mage', 'warrior']],
+  'pants-crit-reg-atk': [2, `Libae's Supercharged Pants (Warrior)
+Required Level Lv. 135 (160 - 25)
+[Hologram] Critical Damage Enhancement Skill Ly. +1
+[Hologram] Registry Ly. +1
+[Hologram] Attack Power & Magic ATT Enhancement
+Skill Ly. +1
+Scroll Enhancement Mone`, ['crit', 'reg', 'atk']],
+  'top-thief-dl-crit': [1, `Libae's Supercharged Top (Warrior)
+[Hologram] Thief Attack Skill Lv. +1
+Dimensional Leap Lv. +1
+[Hologram] Critical Damage Enhancement Skill Ly. +1
+Scroll Enhancement Mone`, ['thief', 'dl', 'crit']]
+};
+for(const [name, [slot, text, lines]] of Object.entries(BLOCKS)){
+  test(`parses ${name}`, () => {
+    const p = S.parseTooltip(text);
+    assert.equal(p.slot, slot);
+    assert.deepEqual(p.lines, lines);
+    assert.deepEqual(p.issues, []);
+  });
+}
+
+test('"Warrior Attack Skill Level +1" without Lv.', () => {
+  assert.deepEqual(S.parseTooltip('Hat (Thief)\nWhite Hole Lv. +1\nRegistry Lv. +1\n[Hologram] Warrior Attack Skill Level +1\nScroll Enhancement None').lines, ['wh', 'reg', 'warrior']);
+});
+
 test('class lines beat ATK, and Damage is not read as Mage', () => {
+  assert.equal(S.lineKey('[Hologram] Attack Power & Magic ATT Enhancement Skill Lv. +1'), 'atk');
+  assert.equal(S.lineKey('[Hologram] Damage Enhancement Skill Lv. +1'), 'dmg');
   assert.equal(S.lineKey('[Hologram] Warrior Attack Skill Lv. +1'), 'warrior');
   assert.equal(S.lineKey('[Hologram] Mage Attack Skill Lv. +1'), 'mage');
   assert.equal(S.lineKey('Damage Lv. +1'), 'dmg');

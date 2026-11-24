@@ -12,7 +12,11 @@ const SLOT_WORDS = [
   [5, ['shoe', 'shoes']]
 ];
 // Checked in order. Class names come before ATK because class lines read "[Hologram] Thief Attack Skill".
+// Known wordings: "Dimensional Leap Lv. +1", "White Hole Lv. +1", "[Hologram] Registry Lv. +1",
+// "[Hologram] Thief Attack Skill Lv. +1", "[Hologram] Magician Attack Skill Lv. +1",
+// "[Hologram] Critical Damage Enhancement Skill Lv. +1", "[Hologram] Attack Power & Magic ATT Enhancement Skill Lv. +1".
 const LINE_WORDS = [
+  ['atk', ['attack power']],   // first: it also contains "Magic", which must not read as Mage
   ['dl', ['dimensional leap']],
   ['wh', ['white hole']],
   ['reg', ['registry']],
@@ -48,7 +52,7 @@ function hasWord(toks, kw){
   }
   // OCR sometimes glues the two words together or splits one word in two.
   if(parts === 2) return toks.some(x => lev(x, w) <= t);
-  return toks.some((x, i) => i + 1 < toks.length && lev(x + toks[i + 1], w) <= t);
+  return t > 0 && toks.some((x, i) => i + 1 < toks.length && lev(x + toks[i + 1], w) <= t - 1);
 }
 
 function lineKey(line){
@@ -57,9 +61,19 @@ function lineKey(line){
   return 'other';
 }
 
-const LV_RE = /\bl\s*[vy]\b\s*[.,:;]?\s*[+4t]?\s*\d/i;   // "Lv. +1" and common OCR misreads of it
-const isSkillLine = l => LV_RE.test(l) && !/requir|level/i.test(l);
-const isAnchor = l => /scr[o0]ll|enhancement|jewel\s*stat/i.test(l);
+// "Lv. +1" / "Level +1" and common OCR misreads ("Ly.", "Lv, 4l").
+const LV_RE = /\bl(?:\s*[vy]|evel)\b\s*[.,:;]?\s*[+4t]?\s*\d/i;
+const isSkillLine = l => LV_RE.test(l) && !/requir/i.test(l);
+// A long line wraps, leaving just "Skill Lv. +1" on the next line.
+const isWrapTail = l => /^\W*sk[il1|]{2,3}\s*l(?:\s*[vy]|evel)\b/i.test(l);
+function joinWrapped(lines){
+  const out = [];
+  for(const l of lines){
+    if(isWrapTail(l) && out.length && !isSkillLine(out[out.length - 1])) out[out.length - 1] += ' ' + l;
+    else out.push(l);
+  }
+  return out;
+}
 
 function findSlot(lines){
   for(let i = 0; i < Math.min(lines.length, 14); i++){
@@ -72,11 +86,12 @@ function findSlot(lines){
 }
 
 function parseTooltip(text){
-  const lines = String(text || '').split(/\r?\n/).map(l => l.replace(/\s+/g, ' ').trim()).filter(Boolean);
+  const lines = joinWrapped(String(text || '').split(/\r?\n/).map(l => l.replace(/[|]\s*$/, '').replace(/\s+/g, ' ').trim()).filter(Boolean));
   const {slot, line:titleLine} = findSlot(lines);
-  // The 3 hologram lines sit right above "Scroll Enhancement".
+  // The 3 hologram lines sit right above "Scroll Enhancement" (or "Jewel Stats" if that line is missing).
   let skill = [];
-  const a = lines.findIndex(isAnchor);
+  let a = lines.findIndex(l => /scr[o0]ll/i.test(l));
+  if(a < 0) a = lines.findIndex(l => /jewel\s*stat/i.test(l));
   if(a > 0){ for(let i = a - 1; i >= 0 && skill.length < 3 && isSkillLine(lines[i]); i--) skill.unshift(lines[i]); }
   if(!skill.length) skill = lines.filter(isSkillLine).slice(-3);
   const keys = skill.map(lineKey);

@@ -216,8 +216,18 @@ const EXAMPLE = [
 // ---------- state ----------
 const KEY = 'quanahSolver.v1';
 let uid = 1;
-let flashAdded = false;
+let flashId = null;
 const mk = lines => ({id: uid++, lines});
+// Items are unique per slot: the same set of lines (in any order) is never stored twice.
+const lineKey = lines => lines.slice().sort().join(',');
+const findItem = (slot, lines) => state.items[slot].find(i => lineKey(i.lines) === lineKey(lines));
+function addItem(slot, lines){
+  const have = findItem(slot, lines);
+  if(have) return {item:have, added:false};
+  const item = mk(lines.slice()); state.items[slot].push(item);
+  return {item, added:true};
+}
+const uniq = list => { const seen = new Set(); return list.filter(l => { const k = lineKey(l); if(seen.has(k)) return false; seen.add(k); return true; }); };
 let state = {items:SLOTS.map(() => []), active:0, pending:[]};
 
 function save(){
@@ -231,7 +241,7 @@ function validLines(l){
 }
 function loadFrom(raw){
   if(!raw || !Array.isArray(raw.items) || raw.items.length !== SLOTS.length) return false;
-  state.items = raw.items.map(a => (Array.isArray(a) ? a : []).filter(validLines).map(l => mk(l.slice())));
+  state.items = raw.items.map(a => uniq((Array.isArray(a) ? a : []).filter(validLines)).map(l => mk(l.slice())));
   if(Number.isInteger(raw.active) && raw.active >= 0 && raw.active < SLOTS.length) state.active = raw.active;
   return true;
 }
@@ -344,8 +354,7 @@ function renderPicker(){
 
 function renderItems(results){
   const list = state.items[state.active];
-  const newId = flashAdded && list.length ? list[list.length - 1].id : null;
-  flashAdded = false;
+  const newId = flashId; flashId = null;
   $('itemList').innerHTML = list.length ? list.map(it => {
     const inSets = results.filter(r => r.picks[state.active] && r.picks[state.active].id === it.id);
     return `<div class="item ${inSets.length ? 'chosen' : ''} ${it.id === newId ? 'new' : ''}">${it.lines.map(k => tag(k)).join('')}${
@@ -433,7 +442,7 @@ document.addEventListener('click', e => {
     if(at >= 0 && k !== 'other') p.splice(at, 1);
     else if(p.length < 3) p.push(k);
     // The third line completes the item: add it to the pool right away.
-    if(p.length === 3){ state.items[state.active].push(mk(p.slice())); state.pending = []; flashAdded = true; render(); }
+    if(p.length === 3){ flashId = addItem(state.active, p).item.id; state.pending = []; render(); }
     else renderPicker();
   }
   else if(t.dataset.del){ const id = +t.dataset.del; state.items[state.active] = state.items[state.active].filter(i => i.id !== id); render(); }
@@ -467,7 +476,6 @@ try{ const th = localStorage.getItem(KEY + '.theme'); if(th) document.documentEl
 const LINE_OPTS = [...STATS.map(s => s.k), 'other'];
 let found = [];   // review list: {sig, slot, lines, issues, seen}
 let live = null;
-const sameLines = (a, b) => a.slice().sort().join() === b.slice().sort().join();
 const scanOk = f => f.slot >= 0 && validLines(f.lines);
 function setScanStatus(msg, isLive){ $('scanStatus').textContent = msg; $('scanStatus').classList.toggle('live', !!isLive); }
 function showPreview(c){
@@ -477,22 +485,24 @@ function showPreview(c){
 function addFound(p){
   const lines = p.lines.slice(0, 3); while(lines.length < 3) lines.push('other');
   const label = `${p.slot >= 0 ? SLOTS[p.slot] : 'Unknown slot'}: ${lines.map(k => NAME[k]).join(' · ')}`;
-  const dup = found.find(f => f.sig === p.sig);
-  if(dup){ dup.seen++; setScanStatus(`Already found ${label}`, live && live.running); }
+  const complete = p.slot >= 0 && validLines(lines);
+  const dup = found.find(f => f.sig === p.sig || (complete && f.slot === p.slot && lineKey(f.lines) === lineKey(lines)));
+  if(complete && findItem(p.slot, lines)){ setScanStatus(`Skipped ${label}. It's already recorded.`, live && live.running); return; }
+  if(dup){ dup.seen++; setScanStatus(`Already in the list: ${label}`, live && live.running); }
   else{ found.push({sig:p.sig, slot:p.slot, lines, issues:p.issues, seen:1}); setScanStatus(`Found ${label}`, live && live.running); }
   renderFound();
 }
 function renderFound(){
-  const ok = found.filter(scanOk).length;
+  const ok = found.filter(f => scanOk(f) && !findItem(f.slot, f.lines)).length;
   $('scanImportBtn').disabled = !ok;
   $('scanImportBtn').textContent = ok ? `Import ${ok} item${ok === 1 ? '' : 's'}` : 'Import items';
   $('scanList').innerHTML = found.map((f, i) => {
     const good = scanOk(f);
-    const inPool = f.slot >= 0 && state.items[f.slot].some(it => sameLines(it.lines, f.lines));
+    const inPool = f.slot >= 0 && !!findItem(f.slot, f.lines);
     const pills = [];
     if(!good) pills.push(`<span class="pill warn" title="${esc(f.issues.join(', '))}">${f.slot < 0 ? 'Pick a slot' : 'Fix lines'}</span>`);
     else if(f.lines.includes('other')) pills.push(`<span class="pill warn" title="A line wasn't recognised. Check it.">Check "Other"</span>`);
-    if(inPool) pills.push('<span class="pill">Already added</span>');
+    if(inPool) pills.push('<span class="pill warn">Already recorded, will be skipped</span>');
     if(f.seen > 1) pills.push(`<span class="pill">seen ×${f.seen}</span>`);
     return `<div class="scan-row ${good ? '' : 'bad'}">
       <select data-fslot="${i}">${f.slot < 0 ? '<option value="-1">Slot?</option>' : ''}${SLOTS.map((s, j) => `<option value="${j}" ${j === f.slot ? 'selected' : ''}>${s}</option>`).join('')}</select>
@@ -512,11 +522,13 @@ $('scanList').addEventListener('click', e => {
 });
 $('scanImportBtn').onclick = () => {
   const ok = found.filter(scanOk);
-  ok.forEach(f => state.items[f.slot].push(mk(f.lines.slice())));
+  let added = 0, last = null;
+  ok.forEach(f => { const r = addItem(f.slot, f.lines); if(r.added){ added++; last = {slot:f.slot, id:r.item.id}; } });
   found = found.filter(f => !scanOk(f));
-  if(ok.length){ state.active = ok[ok.length - 1].slot; flashAdded = true; }
+  if(last){ state.active = last.slot; flashId = last.id; }
   render(); renderFound();
-  setScanStatus(`Imported ${ok.length} item${ok.length === 1 ? '' : 's'}.`, live && live.running);
+  const skipped = ok.length - added;
+  setScanStatus(`Imported ${added} item${added === 1 ? '' : 's'}${skipped ? `, skipped ${skipped} already recorded` : ''}.`, live && live.running);
 };
 $('scanClearBtn').onclick = () => { found = []; renderFound(); };
 $('scanBtn').onclick = async () => {
