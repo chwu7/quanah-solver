@@ -98,6 +98,18 @@ th{font-size:11px;text-transform:uppercase;letter-spacing:.05em;color:var(--mute
 .pill.registry{background:color-mix(in srgb,var(--c-reg) 18%,transparent);color:var(--c-reg)}
 .note{font-size:12.5px;color:var(--muted);margin-top:8px}
 .table-wrap{overflow-x:auto}
+.scan{margin-top:14px;border-top:1px solid var(--border);padding-top:12px}
+.scan.drag{outline:2px dashed var(--accent);outline-offset:4px;border-radius:8px}
+.scan-status{font-size:12.5px;color:var(--muted);margin:8px 0}
+.scan-status.live::before{content:"";display:inline-block;width:8px;height:8px;border-radius:50%;background:var(--bad);margin-right:6px;animation:blink 1.2s infinite}
+@keyframes blink{50%{opacity:.25}}
+.scan-preview{max-width:100%;max-height:180px;border-radius:6px;border:1px solid var(--border);display:none}
+.scan-preview.show{display:block}
+.scan-row{display:flex;align-items:center;gap:6px;padding:7px 9px;background:var(--panel2);border-radius:8px;flex-wrap:wrap}
+.scan-row.bad{outline:1px solid var(--warn)}
+.scan-row select{padding:3px 6px;font-size:12.5px}
+.scan-row .x{margin-left:auto;padding:2px 8px}
+.pill.warn{background:color-mix(in srgb,var(--warn) 18%,transparent);color:var(--warn)}
 footer{text-align:center;color:var(--muted);font-size:12px;padding:0 16px 24px}
 </style>
 </head>
@@ -132,6 +144,20 @@ footer{text-align:center;color:var(--muted);font-size:12px;padding:0 16px 24px}
       <input id="importFile" type="file" accept="application/json,.json" hidden>
       <button id="clearAllBtn" class="danger">Clear all</button>
     </div>
+    <div class="scan" id="scanBox">
+      <h2 style="margin-bottom:4px">Scan from game</h2>
+      <div class="muted" style="font-size:12.5px">Share your MapleStory window, then hover over each item and hold still for a moment. The page reads the tooltip from the screen share. Nothing touches the game. You can also paste (Ctrl+V) or drop a screenshot of a tooltip here.</div>
+      <div class="row" style="margin-top:10px">
+        <button id="scanBtn" class="primary">Start scan</button>
+        <button id="scanClearBtn" class="ghost">Clear found</button>
+      </div>
+      <div class="scan-status" id="scanStatus">Not scanning.</div>
+      <canvas class="scan-preview" id="scanPreview"></canvas>
+      <div id="scanList" class="items"></div>
+      <div class="row" style="margin-top:10px">
+        <button id="scanImportBtn" class="primary" disabled>Import items</button>
+      </div>
+    </div>
   </section>
 
   <section class="card">
@@ -144,6 +170,7 @@ footer{text-align:center;color:var(--muted);font-size:12px;padding:0 16px 24px}
   <section class="card build-card" id="card-registry"></section>
 </main>
 <footer>Line caps and target sets follow the Quanah World Utilities 3-Line Assistant. Your data is saved only in this browser.</footer>
+<script src="scanner.js"></script>
 
 <script>
 // ---------- data ----------
@@ -435,6 +462,93 @@ $('themeBtn').onclick = () => {
   try{ localStorage.setItem(KEY + '.theme', root.dataset.theme); }catch(e){}
 };
 try{ const th = localStorage.getItem(KEY + '.theme'); if(th) document.documentElement.dataset.theme = th; }catch(e){}
+
+// ---------- scan from game ----------
+const LINE_OPTS = [...STATS.map(s => s.k), 'other'];
+let found = [];   // review list: {sig, slot, lines, issues, seen}
+let live = null;
+const sameLines = (a, b) => a.slice().sort().join() === b.slice().sort().join();
+const scanOk = f => f.slot >= 0 && validLines(f.lines);
+function setScanStatus(msg, isLive){ $('scanStatus').textContent = msg; $('scanStatus').classList.toggle('live', !!isLive); }
+function showPreview(c){
+  const p = $('scanPreview'); p.width = c.width; p.height = c.height;
+  p.getContext('2d').drawImage(c, 0, 0); p.classList.add('show');
+}
+function addFound(p){
+  const lines = p.lines.slice(0, 3); while(lines.length < 3) lines.push('other');
+  const label = `${p.slot >= 0 ? SLOTS[p.slot] : 'Unknown slot'}: ${lines.map(k => NAME[k]).join(' · ')}`;
+  const dup = found.find(f => f.sig === p.sig);
+  if(dup){ dup.seen++; setScanStatus(`Already found ${label}`, live && live.running); }
+  else{ found.push({sig:p.sig, slot:p.slot, lines, issues:p.issues, seen:1}); setScanStatus(`Found ${label}`, live && live.running); }
+  renderFound();
+}
+function renderFound(){
+  const ok = found.filter(scanOk).length;
+  $('scanImportBtn').disabled = !ok;
+  $('scanImportBtn').textContent = ok ? `Import ${ok} item${ok === 1 ? '' : 's'}` : 'Import items';
+  $('scanList').innerHTML = found.map((f, i) => {
+    const good = scanOk(f);
+    const inPool = f.slot >= 0 && state.items[f.slot].some(it => sameLines(it.lines, f.lines));
+    const pills = [];
+    if(!good) pills.push(`<span class="pill warn" title="${esc(f.issues.join(', '))}">${f.slot < 0 ? 'Pick a slot' : 'Fix lines'}</span>`);
+    else if(f.lines.includes('other')) pills.push(`<span class="pill warn" title="A line wasn't recognised. Check it.">Check "Other"</span>`);
+    if(inPool) pills.push('<span class="pill">Already added</span>');
+    if(f.seen > 1) pills.push(`<span class="pill">seen ×${f.seen}</span>`);
+    return `<div class="scan-row ${good ? '' : 'bad'}">
+      <select data-fslot="${i}">${f.slot < 0 ? '<option value="-1">Slot?</option>' : ''}${SLOTS.map((s, j) => `<option value="${j}" ${j === f.slot ? 'selected' : ''}>${s}</option>`).join('')}</select>
+      ${f.lines.map((k, j) => `<select class="tag s-${k}" data-fline="${i}" data-j="${j}">${LINE_OPTS.map(o => `<option value="${o}" ${o === k ? 'selected' : ''}>${esc(NAME[o])}</option>`).join('')}</select>`).join('')}
+      ${pills.join('')}<button class="x ghost danger" data-fdel="${i}" title="Remove">✕</button></div>`;
+  }).join('');
+}
+$('scanList').addEventListener('change', e => {
+  const t = e.target;
+  if(t.dataset.fslot !== undefined) found[+t.dataset.fslot].slot = +t.value;
+  else if(t.dataset.fline !== undefined) found[+t.dataset.fline].lines[+t.dataset.j] = t.value;
+  renderFound();
+});
+$('scanList').addEventListener('click', e => {
+  const t = e.target.closest('[data-fdel]'); if(!t) return;
+  e.stopPropagation(); found.splice(+t.dataset.fdel, 1); renderFound();
+});
+$('scanImportBtn').onclick = () => {
+  const ok = found.filter(scanOk);
+  ok.forEach(f => state.items[f.slot].push(mk(f.lines.slice())));
+  found = found.filter(f => !scanOk(f));
+  if(ok.length){ state.active = ok[ok.length - 1].slot; flashAdded = true; }
+  render(); renderFound();
+  setScanStatus(`Imported ${ok.length} item${ok.length === 1 ? '' : 's'}.`, live && live.running);
+};
+$('scanClearBtn').onclick = () => { found = []; renderFound(); };
+$('scanBtn').onclick = async () => {
+  if(live && live.running){ live.stop(); return; }
+  if(!navigator.mediaDevices || !navigator.mediaDevices.getDisplayMedia){ setScanStatus('Screen sharing is not supported in this browser. Try Chrome or Edge, or paste screenshots instead.'); return; }
+  live = Scanner.createLiveScanner({
+    onStatus: m => setScanStatus(m, true),
+    onItem: addFound,
+    onPreview: showPreview,
+    onStop: () => { $('scanBtn').textContent = 'Start scan'; setScanStatus('Not scanning.'); }
+  });
+  try{ await live.start(); $('scanBtn').textContent = 'Stop scan'; }
+  catch(err){ setScanStatus(err.name === 'NotAllowedError' ? 'Screen share was cancelled.' : 'Could not start: ' + err.message); }
+};
+async function scanFile(file){
+  try{
+    const r = await Scanner.scanImage(file, m => setScanStatus(m));
+    showPreview(r.preview);
+    if(r.lines.length || r.slot >= 0) addFound(r); else setScanStatus('No hologram lines found in that image.');
+  }catch(err){ setScanStatus('Could not read image: ' + err.message); }
+}
+document.addEventListener('paste', e => {
+  const f = [...(e.clipboardData ? e.clipboardData.files : [])].find(f => f.type.startsWith('image/'));
+  if(f){ e.preventDefault(); scanFile(f); }
+});
+const sb = $('scanBox');
+sb.addEventListener('dragover', e => { e.preventDefault(); sb.classList.add('drag'); });
+sb.addEventListener('dragleave', () => sb.classList.remove('drag'));
+sb.addEventListener('drop', e => {
+  e.preventDefault(); sb.classList.remove('drag');
+  [...e.dataTransfer.files].filter(f => f.type.startsWith('image/')).forEach(scanFile);
+});
 
 load();
 render();

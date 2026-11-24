@@ -1,0 +1,252 @@
+// Inventory scanner: reads MapleStory item tooltips from a screen share (pixels only) with OCR.
+// The parsing/image helpers are pure so they can be tested in Node; the capture part needs a browser.
+(function(root){
+'use strict';
+
+const SLOT_WORDS = [
+  [0, ['hat']],
+  [1, ['top']],
+  [2, ['pants', 'bottom']],
+  [3, ['cape']],
+  [4, ['glove', 'gloves']],
+  [5, ['shoe', 'shoes']]
+];
+// Checked in order. Class names come before ATK because class lines read "[Hologram] Thief Attack Skill".
+const LINE_WORDS = [
+  ['dl', ['dimensional leap']],
+  ['wh', ['white hole']],
+  ['reg', ['registry']],
+  ['pirate', ['pirate']],
+  ['warrior', ['warrior']],
+  ['mage', ['mage', 'magician']],
+  ['thief', ['thief']],
+  ['bowman', ['bowman', 'archer']],
+  ['crit', ['critical', 'crit']],
+  ['dmg', ['damage', 'dmg']],
+  ['atk', ['attack', 'atk']]
+];
+
+function lev(a, b){
+  if(a === b) return 0;
+  const m = a.length, n = b.length; if(!m) return n; if(!n) return m;
+  let prev = Array.from({length:n + 1}, (_, j) => j);
+  for(let i = 1; i <= m; i++){
+    const cur = [i];
+    for(let j = 1; j <= n; j++) cur[j] = Math.min(prev[j] + 1, cur[j - 1] + 1, prev[j - 1] + (a[i - 1] === b[j - 1] ? 0 : 1));
+    prev = cur;
+  }
+  return prev[n];
+}
+const tol = w => w.length >= 8 ? 2 : w.length >= 5 ? 1 : 0;
+const tokens = s => s.toLowerCase().replace(/[0|]/g, m => m === '0' ? 'o' : 'l').split(/[^a-z]+/).filter(Boolean);
+// True if a keyword (one or two words) appears in the token list, allowing a few OCR typos.
+function hasWord(toks, kw){
+  const w = kw.replace(/\s+/g, ''), parts = kw.split(/\s+/).length, t = tol(w);
+  for(let i = 0; i + parts <= toks.length; i++){
+    const cand = toks.slice(i, i + parts).join('');
+    if(lev(cand, w) <= t) return true;
+  }
+  // OCR sometimes glues the two words together or splits one word in two.
+  if(parts === 2) return toks.some(x => lev(x, w) <= t);
+  return toks.some((x, i) => i + 1 < toks.length && lev(x + toks[i + 1], w) <= t);
+}
+
+function lineKey(line){
+  const toks = tokens(line);
+  for(const [k, kws] of LINE_WORDS) if(kws.some(kw => hasWord(toks, kw))) return k;
+  return 'other';
+}
+
+const LV_RE = /\bl\s*[vy]\b\s*[.,:;]?\s*[+4t]?\s*\d/i;   // "Lv. +1" and common OCR misreads of it
+const isSkillLine = l => LV_RE.test(l) && !/requir|level/i.test(l);
+const isAnchor = l => /scr[o0]ll|enhancement|jewel\s*stat/i.test(l);
+
+function findSlot(lines){
+  for(let i = 0; i < Math.min(lines.length, 14); i++){
+    const toks = tokens(lines[i]);
+    for(const [slot, words] of SLOT_WORDS) for(const w of words){
+      if(toks.includes(w) || (w.length >= 4 && toks.some(x => x.length >= 4 && lev(x, w) <= 1))) return {slot, line:lines[i]};
+    }
+  }
+  return {slot:-1, line:''};
+}
+
+function parseTooltip(text){
+  const lines = String(text || '').split(/\r?\n/).map(l => l.replace(/\s+/g, ' ').trim()).filter(Boolean);
+  const {slot, line:titleLine} = findSlot(lines);
+  // The 3 hologram lines sit right above "Scroll Enhancement".
+  let skill = [];
+  const a = lines.findIndex(isAnchor);
+  if(a > 0){ for(let i = a - 1; i >= 0 && skill.length < 3 && isSkillLine(lines[i]); i--) skill.unshift(lines[i]); }
+  if(!skill.length) skill = lines.filter(isSkillLine).slice(-3);
+  const keys = skill.map(lineKey);
+  const cp = (text.match(/\+\s*(\d{1,3}(?:[,.]\d{3})+)/) || [])[1];
+  const issues = [];
+  if(slot < 0) issues.push('slot not found');
+  if(keys.length < 3) issues.push(`only ${keys.length} line${keys.length === 1 ? '' : 's'} read`);
+  if(keys.includes('other')) issues.push('unrecognised line');
+  const real = keys.filter(k => k !== 'other');
+  if(new Set(real).size !== real.length) issues.push('duplicate line');
+  const sig = [slot, keys.join('+'), cp ? cp.replace(/\D/g, '') : tokens(titleLine).join('')].join('|');
+  return {slot, lines:keys, raw:skill, title:titleLine, cp:cp || '', sig, issues};
+}
+
+// ---------- image helpers (operate on ImageData-like {width, height, data}) ----------
+// Tooltip panel: dark, slightly blue-grey translucent background.
+const isPanel = (r, g, b) => r >= 22 && r <= 80 && g >= 28 && g <= 86 && b >= 34 && b <= 96 && b >= r + 3 && Math.max(r, g, b) - Math.min(r, g, b) <= 34;
+
+// Finds the tooltip's bounding box: the largest connected group of mostly-panel 8x8 blocks.
+function findPanel(img, opts = {}){
+  const B = opts.block || 8, {width:W, height:H, data:d} = img;
+  const bw = Math.floor(W / B), bh = Math.floor(H / B);
+  const on = new Uint8Array(bw * bh);
+  for(let by = 0; by < bh; by++) for(let bx = 0; bx < bw; bx++){
+    let n = 0;
+    for(let y = by * B; y < by * B + B; y += 2) for(let x = bx * B; x < bx * B + B; x += 2){
+      const i = (y * W + x) * 4; if(isPanel(d[i], d[i + 1], d[i + 2])) n++;
+    }
+    on[by * bw + bx] = n >= (B * B / 4) * 0.45 ? 1 : 0;
+  }
+  const seen = new Uint8Array(bw * bh); let best = null;
+  for(let s = 0; s < on.length; s++){
+    if(!on[s] || seen[s]) continue;
+    let x0 = bw, y0 = bh, x1 = -1, y1 = -1, count = 0; const stack = [s]; seen[s] = 1;
+    while(stack.length){
+      const c = stack.pop(), cx = c % bw, cy = (c - cx) / bw; count++;
+      if(cx < x0) x0 = cx; if(cx > x1) x1 = cx; if(cy < y0) y0 = cy; if(cy > y1) y1 = cy;
+      for(const [dx, dy] of [[1,0],[-1,0],[0,1],[0,-1]]){
+        const nx = cx + dx, ny = cy + dy; if(nx < 0 || ny < 0 || nx >= bw || ny >= bh) continue;
+        const ni = ny * bw + nx; if(on[ni] && !seen[ni]){ seen[ni] = 1; stack.push(ni); }
+      }
+    }
+    if(!best || count > best.count) best = {count, x0, y0, x1, y1};
+  }
+  if(!best) return null;
+  const box = {x:Math.max(0, best.x0 * B - B), y:Math.max(0, best.y0 * B - B)};
+  box.w = Math.min(W, (best.x1 + 2) * B + B) - box.x;
+  box.h = Math.min(H, (best.y1 + 2) * B + B) - box.y;
+  // A tooltip is tall and at least ~180px wide; anything smaller is some other dark UI.
+  const minW = opts.minW || 180, minH = opts.minH || 220;
+  if(box.w < minW || box.h < minH || best.count < 0.45 * (best.x1 - best.x0 + 1) * (best.y1 - best.y0 + 1)) return null;
+  return box;
+}
+
+// Light text on a dark panel -> dark text on white, contrast-stretched, for OCR. Modifies img in place.
+function preprocess(img){
+  const d = img.data;
+  for(let i = 0; i < d.length; i += 4){
+    const v = Math.max(d[i], d[i + 1], d[i + 2]);
+    const o = 255 - Math.max(0, Math.min(255, (v - 75) * 2.2));
+    d[i] = d[i + 1] = d[i + 2] = o; d[i + 3] = 255;
+  }
+  return img;
+}
+
+// Tiny grayscale fingerprint of a region, used to tell when a tooltip has settled or changed.
+function thumb(img, box, w = 24, h = 32){
+  const out = new Uint8Array(w * h), {width:W, data:d} = img;
+  for(let y = 0; y < h; y++) for(let x = 0; x < w; x++){
+    const sx = Math.floor(box.x + (x + 0.5) * box.w / w), sy = Math.floor(box.y + (y + 0.5) * box.h / h), i = (sy * W + sx) * 4;
+    out[y * w + x] = (d[i] + d[i + 1] + d[i + 2]) / 3;
+  }
+  return out;
+}
+function thumbDiff(a, b){
+  if(!a || !b || a.length !== b.length) return 255;
+  let s = 0; for(let i = 0; i < a.length; i++) s += Math.abs(a[i] - b[i]);
+  return s / a.length;
+}
+
+// ---------- browser capture ----------
+const TESSERACT_URL = 'https://cdn.jsdelivr.net/npm/tesseract.js@5.1.1/dist/tesseract.min.js';
+let workerP = null;
+function loadScript(src){
+  return new Promise((res, rej) => { const s = document.createElement('script'); s.src = src; s.onload = res; s.onerror = () => rej(new Error('Could not load OCR library')); document.head.appendChild(s); });
+}
+function getWorker(onStatus){
+  if(!workerP) workerP = (async () => {
+    onStatus && onStatus('Loading OCR engine… (first time only)');
+    if(!root.Tesseract) await loadScript(TESSERACT_URL);
+    const w = await root.Tesseract.createWorker('eng');
+    await w.setParameters({tessedit_pageseg_mode:'6', preserve_interword_spaces:'1'});
+    return w;
+  })().catch(e => { workerP = null; throw e; });
+  return workerP;
+}
+
+// Crops the box out of a source canvas, upscales 2x, preprocesses, and OCRs it.
+async function ocrBox(srcCanvas, box, onStatus){
+  const c = document.createElement('canvas'); c.width = box.w * 2; c.height = box.h * 2;
+  const g = c.getContext('2d', {willReadFrequently:true}); g.imageSmoothingEnabled = true;
+  g.drawImage(srcCanvas, box.x, box.y, box.w, box.h, 0, 0, c.width, c.height);
+  const img = g.getImageData(0, 0, c.width, c.height); preprocess(img); g.putImageData(img, 0, 0);
+  const w = await getWorker(onStatus);
+  const {data} = await w.recognize(c);
+  return {text:data.text, canvas:c};
+}
+
+// Reads one still image (pasted/dropped screenshot).
+async function scanImage(source, onStatus){
+  const bmp = source instanceof Blob ? await createImageBitmap(source) : source;
+  const c = document.createElement('canvas'); c.width = bmp.width; c.height = bmp.height;
+  const g = c.getContext('2d', {willReadFrequently:true}); g.drawImage(bmp, 0, 0);
+  const img = g.getImageData(0, 0, c.width, c.height);
+  const box = findPanel(img, {minW:120, minH:150}) || {x:0, y:0, w:c.width, h:c.height};
+  onStatus && onStatus('Reading screenshot…');
+  const r = await ocrBox(c, box, onStatus);
+  return {...parseTooltip(r.text), text:r.text, preview:r.canvas};
+}
+
+// Live scanner over a screen share. Calls onItem(parsed) each time a settled tooltip is read.
+function createLiveScanner({onStatus, onItem, onPreview, onStop, interval = 400}){
+  let stream = null, video = null, timer = null, busy = false, prevThumb = null, lastOcrThumb = null;
+  const canvas = document.createElement('canvas'), g = canvas.getContext('2d', {willReadFrequently:true});
+
+  async function tick(){
+    if(!video || video.readyState < 2 || busy) return;
+    const W = video.videoWidth, H = video.videoHeight; if(!W || !H) return;
+    if(canvas.width !== W || canvas.height !== H){ canvas.width = W; canvas.height = H; }
+    g.drawImage(video, 0, 0);
+    const img = g.getImageData(0, 0, W, H);
+    const box = findPanel(img);
+    if(!box){ prevThumb = null; onStatus('Watching… hover over an item to show its tooltip.'); return; }
+    const t = thumb(img, box);
+    // Only read once the tooltip has stopped moving (same as last tick) and it's not the one we just read.
+    const settled = thumbDiff(t, prevThumb) < 6;
+    prevThumb = t;
+    if(!settled || thumbDiff(t, lastOcrThumb) < 6) return;
+    busy = true;
+    try{
+      onStatus('Reading tooltip…');
+      const r = await ocrBox(canvas, box, onStatus);
+      lastOcrThumb = t;
+      const p = {...parseTooltip(r.text), text:r.text};
+      onPreview && onPreview(r.canvas);
+      if(p.lines.length || p.slot >= 0) onItem(p); else onStatus('Tooltip found but no hologram lines read.');
+    }catch(e){ onStatus('OCR error: ' + e.message); }
+    finally{ busy = false; }
+  }
+
+  return {
+    async start(){
+      stream = await navigator.mediaDevices.getDisplayMedia({video:{frameRate:5}, audio:false});
+      video = document.createElement('video'); video.muted = true; video.playsInline = true; video.srcObject = stream;
+      await video.play();
+      stream.getVideoTracks()[0].addEventListener('ended', () => this.stop());
+      getWorker(onStatus).then(() => onStatus('Watching… hover over an item to show its tooltip.'), e => onStatus(e.message));
+      timer = setInterval(tick, interval);
+    },
+    stop(){
+      clearInterval(timer); timer = null;
+      if(stream) stream.getTracks().forEach(t => t.stop());
+      stream = null; video = null; prevThumb = lastOcrThumb = null;
+      onStop && onStop();
+    },
+    get running(){ return !!timer; }
+  };
+}
+
+const api = {parseTooltip, lineKey, findPanel, preprocess, thumb, thumbDiff, lev, scanImage, createLiveScanner};
+if(typeof module !== 'undefined' && module.exports) module.exports = api;
+else root.Scanner = api;
+})(typeof window !== 'undefined' ? window : globalThis);
