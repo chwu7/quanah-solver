@@ -131,6 +131,15 @@ th{font-size:11px;text-transform:uppercase;letter-spacing:.05em;color:var(--mute
 .prio input{flex:1;min-width:0;accent-color:var(--accent)}
 .prio b{font-family:"Space Grotesk",sans-serif;min-width:20px;text-align:right}
 .cnt .p{font-size:11px;color:var(--muted);margin-left:auto;margin-right:8px}
+.modes{display:flex;gap:6px;margin-top:12px}
+.modes .tab{padding:7px 16px;font-weight:600}
+[hidden]{display:none!important}
+/* jewel colours */
+:root{--j-red:#e0484d;--j-gray:#8a909c;--j-purple:#8b5cf6;--j-blue:#2f80ed;--j-green:#1fa67a}
+.j-red{--c:var(--j-red)} .j-gray{--c:var(--j-gray)} .j-purple{--c:var(--j-purple)} .j-blue{--c:var(--j-blue)} .j-green{--c:var(--j-green)} .j-prismatic{--c:#a66cff}
+.tag.j-prismatic::before{background:conic-gradient(#ff5f6d,#ffc371,#5ee7a0,#4facfe,#a66cff,#ff5f6d)}
+.chip.j-prismatic.selected{background:linear-gradient(90deg,#e0484d,#e08a1f,#1fa67a,#2f80ed,#8b5cf6);border-color:transparent}
+.jtarget{display:flex;gap:6px;flex-wrap:wrap;align-items:center;padding:8px 10px;background:var(--panel2);border-radius:8px;font-size:12.5px;margin-bottom:10px}
 footer{text-align:center;color:var(--muted);font-size:12px;padding:0 16px 24px}
 </style>
 </head>
@@ -139,15 +148,20 @@ footer{text-align:center;color:var(--muted);font-size:12px;padding:0 16px 24px}
   <div class="row spread">
     <div>
       <h1>Quanah 3-Line Solver</h1>
-      <p>Add the Hologram lines on each Hat, Top, Bottom, Cape, Glove and Shoe you own. The solver picks one item per slot to get as close to 18/18 as possible, filling your highest-priority lines first.</p>
+      <p id="blurb-lines">Add the Hologram lines on each Hat, Top, Bottom, Cape, Glove and Shoe you own. The solver picks one item per slot to get as close to 18/18 as possible, filling your highest-priority lines first.</p>
+      <p id="blurb-jewels" hidden>Add the jewel slot colours on each Hat, Top, Bottom, Cape, Glove and Shoe you own. A full set has 18 jewel slots (3 per item).</p>
     </div>
     <div class="row">
       <button id="themeBtn" class="ghost" title="Toggle theme">Theme</button>
     </div>
   </div>
+  <div class="modes" id="modeTabs">
+    <button class="tab" data-mode="lines">Hologram lines</button>
+    <button class="tab" data-mode="jewels">Jewels</button>
+  </div>
 </header>
 
-<main>
+<main id="view-lines">
   <section class="card">
     <h2>1. Add items <span class="muted" id="itemTotal"></span></h2>
     <div id="slotTabs" class="tabs"></div>
@@ -212,6 +226,26 @@ footer{text-align:center;color:var(--muted);font-size:12px;padding:0 16px 24px}
   <section class="card build-card" id="card-meta"></section>
   <section class="card build-card" id="card-registry"></section>
 </main>
+
+<main id="view-jewels" hidden>
+  <section class="card">
+    <h2>Add items <span class="muted" id="jItemTotal"></span></h2>
+    <div id="jSlotTabs" class="tabs"></div>
+    <div class="muted" style="font-size:12.5px">Click the 3 jewel slot colours on a <b id="jSlotName"></b>. The item is added as soon as you pick the third slot. A colour can appear more than once on an item.</div>
+    <div id="jPicker"></div>
+    <div class="pending" id="jPending"></div>
+    <div class="row">
+      <button id="jClearPendBtn" class="ghost">Clear</button>
+      <button id="jClearAllBtn" class="danger" style="margin-left:auto">Clear all jewel items</button>
+    </div>
+    <div id="jItemList" class="items"></div>
+  </section>
+  <section class="card">
+    <h2>Target set</h2>
+    <div id="jTarget"></div>
+    <div class="note">Solving for the best jewel combination is coming next. For now, record your items and their jewel slots here.</div>
+  </section>
+</main>
 <footer>Line caps and target sets follow the Quanah World Utilities 3-Line Assistant. Your data is saved only in this browser.</footer>
 <script src="scanner.js"></script>
 
@@ -255,6 +289,17 @@ const PRESETS = {
 };
 const validPrio = p => p && typeof p === 'object' && STATS.every(s => Number.isInteger(p[s.k]) && p[s.k] >= 1 && p[s.k] <= 10);
 const presetOf = p => Object.keys(PRESETS).find(k => STATS.every(s => PRESETS[k].p[s.k] === p[s.k])) || 'custom';
+// Jewel slot colours. Each item has 3 jewel slots; colours can repeat on an item.
+const JEWELS = [
+  {k:'red', n:'Red'}, {k:'gray', n:'Gray'}, {k:'purple', n:'Purple'},
+  {k:'blue', n:'Blue'}, {k:'green', n:'Green'}, {k:'prismatic', n:'Prismatic'}
+];
+const JNAME = Object.fromEntries(JEWELS.map(j => [j.k, j.n]));
+// Ideal 18-slot set per class. Each group: n slots that may be any of the listed colours.
+const JEWEL_TARGETS = {
+  warrior: {name:'Warrior', groups:[{n:4, of:['prismatic']}, {n:14, of:['red','gray','green']}]}
+};
+const validJewels = l => Array.isArray(l) && l.length === 3 && l.every(k => JNAME[k]);
 const EXAMPLE = [
   [['dl','atk','crit'],['atk','wh','other']],
   [['wh','reg','dmg'],['dl','crit','dmg']],
@@ -279,10 +324,19 @@ function addItem(slot, lines){
   return {item, added:true};
 }
 const uniq = list => { const seen = new Set(); return list.filter(l => { const k = lineKey(l); if(seen.has(k)) return false; seen.add(k); return true; }); };
-let state = {items:SLOTS.map(() => []), active:0, pending:[], prio:{...PRESETS.lines.p}};
+let state = {items:SLOTS.map(() => []), active:0, pending:[], prio:{...PRESETS.lines.p},
+  mode:'lines', jewels:SLOTS.map(() => []), jActive:0, jPending:[]};
+// Jewel items are unique per slot too: the same colours (in any order) are never stored twice.
+function addJewelItem(slot, cols){
+  const have = state.jewels[slot].find(i => lineKey(i.lines) === lineKey(cols));
+  if(have) return {item:have, added:false};
+  const item = mk(cols.slice()); state.jewels[slot].push(item);
+  return {item, added:true};
+}
 
 function save(){
-  try{ localStorage.setItem(KEY, JSON.stringify({active:state.active, items:state.items.map(a => a.map(i => i.lines)), prio:state.prio})); }catch(e){}
+  try{ localStorage.setItem(KEY, JSON.stringify({active:state.active, items:state.items.map(a => a.map(i => i.lines)), prio:state.prio,
+    mode:state.mode, jActive:state.jActive, jewels:state.jewels.map(a => a.map(i => i.lines))})); }catch(e){}
 }
 function validLines(l){
   if(!Array.isArray(l) || l.length !== 3) return false;
@@ -295,6 +349,10 @@ function loadFrom(raw){
   state.items = raw.items.map(a => uniq((Array.isArray(a) ? a : []).filter(validLines)).map(l => mk(l.slice())));
   if(Number.isInteger(raw.active) && raw.active >= 0 && raw.active < SLOTS.length) state.active = raw.active;
   if(validPrio(raw.prio)) state.prio = Object.fromEntries(STATS.map(s => [s.k, raw.prio[s.k]]));
+  if(Array.isArray(raw.jewels) && raw.jewels.length === SLOTS.length)
+    state.jewels = raw.jewels.map(a => uniq((Array.isArray(a) ? a : []).filter(validJewels)).map(l => mk(l.slice())));
+  if(Number.isInteger(raw.jActive) && raw.jActive >= 0 && raw.jActive < SLOTS.length) state.jActive = raw.jActive;
+  if(raw.mode === 'lines' || raw.mode === 'jewels') state.mode = raw.mode;
   return true;
 }
 function load(){
@@ -497,11 +555,37 @@ function syncPreset(){
     (cur === 'custom' ? '<option value="custom" selected>Custom</option>' : '');
 }
 
+// ---------- jewels tab ----------
+const jtag = k => `<span class="tag j-${k}">${esc(JNAME[k])}</span>`;
+function renderJewels(){
+  const a = state.jActive, p = state.jPending;
+  $('jSlotTabs').innerHTML = SLOTS.map((s, i) => `<button class="tab ${i === a ? 'active' : ''}" data-jslot="${i}">${s}<span class="n">${state.jewels[i].length}</span></button>`).join('');
+  $('jSlotName').textContent = SLOTS[a];
+  $('jItemTotal').textContent = `(${state.jewels.reduce((n, l) => n + l.length, 0)})`;
+  $('jPicker').innerHTML = `<div class="group-label">Jewel slot colours</div><div class="chips">${JEWELS.map(({k}) => {
+    const n = p.filter(x => x === k).length;
+    return `<button class="chip j-${k} ${n ? 'selected' : ''}" data-jewel="${k}" ${p.length >= 3 ? 'disabled' : ''}>${esc(JNAME[k])}${n > 1 ? ' ×' + n : ''}</button>`; }).join('')}</div>`;
+  $('jPending').innerHTML = [0,1,2].map(i => p[i]
+    ? `<button class="tag j-${p[i]} unpick" data-junpick="${i}" title="Click to remove">${esc(JNAME[p[i]])} <span aria-hidden="true">✕</span></button>`
+    : `<span class="tag empty">Slot ${i + 1}</span>`).join('');
+  const list = state.jewels[a], newId = flashId; flashId = null;
+  $('jItemList').innerHTML = list.length ? list.map(it =>
+    `<div class="item ${it.id === newId ? 'new' : ''}">${it.lines.map(jtag).join('')}<button class="x ghost danger" data-jdel="${it.id}" title="Remove">✕</button></div>`).join('')
+    : `<div class="muted">No ${SLOTS[a]} jewel items yet.</div>`;
+  $('jTarget').innerHTML = Object.values(JEWEL_TARGETS).map(t => `<div class="jtarget"><b>${esc(t.name)}</b>${
+    t.groups.map(g => `<span>${g.n}×</span>${g.of.map(jtag).join('<span class="muted">or</span>')}`).join('<span class="muted">+</span>')}</div>`).join('');
+}
+function renderMode(){
+  document.querySelectorAll('#modeTabs [data-mode]').forEach(b => b.classList.toggle('active', b.dataset.mode === state.mode));
+  ['lines', 'jewels'].forEach(m => { $('view-' + m).hidden = state.mode !== m; $('blurb-' + m).hidden = state.mode !== m; });
+}
+
 function render(){
   const results = BUILD_KEYS.map(solve);
   const lead = leader(results);
   renderPicker(); renderItems(results); renderRace(results, lead);
   results.forEach(r => renderCard(r, lead));
+  renderJewels(); renderMode();
   save();
 }
 
@@ -519,6 +603,17 @@ document.addEventListener('click', e => {
     if(p.length === 3){ flashId = addItem(state.active, p).item.id; state.pending = []; render(); }
     else renderPicker();
   }
+  else if(t.dataset.mode){ state.mode = t.dataset.mode; renderMode(); save(); }
+  else if(t.dataset.jslot !== undefined){ state.jActive = +t.dataset.jslot; state.jPending = []; renderJewels(); save(); }
+  else if(t.dataset.junpick !== undefined){ state.jPending.splice(+t.dataset.junpick, 1); renderJewels(); }
+  else if(t.dataset.jewel){
+    const p = state.jPending;
+    if(p.length < 3) p.push(t.dataset.jewel);
+    // The third slot completes the item.
+    if(p.length === 3){ flashId = addJewelItem(state.jActive, p).item.id; state.jPending = []; renderJewels(); save(); }
+    else renderJewels();
+  }
+  else if(t.dataset.jdel){ const id = +t.dataset.jdel; state.jewels[state.jActive] = state.jewels[state.jActive].filter(i => i.id !== id); renderJewels(); save(); }
   else if(t.dataset.del){ const id = +t.dataset.del; state.items[state.active] = state.items[state.active].filter(i => i.id !== id); render(); }
 });
 $('prioList').addEventListener('input', e => {
@@ -528,10 +623,12 @@ $('prioList').addEventListener('input', e => {
 });
 $('presetSel').onchange = e => { const p = PRESETS[e.target.value]; if(!p) return; state.prio = {...p.p}; renderPrio(); render(); };
 $('clearPendBtn').onclick =() => { state.pending = []; renderPicker(); };
+$('jClearPendBtn').onclick = () => { state.jPending = []; renderJewels(); };
+$('jClearAllBtn').onclick = () => { if(confirm('Remove every jewel item from every slot?')){ state.jewels = SLOTS.map(() => []); state.jPending = []; renderJewels(); save(); } };
 $('exampleBtn').onclick = () => { if(confirm('Replace your items with the example set?')){ state.items = EXAMPLE.map(a => a.map(l => mk(l.slice()))); render(); } };
 $('clearAllBtn').onclick = () => { if(confirm('Remove every item from every slot?')){ state.items = SLOTS.map(() => []); state.pending = []; render(); } };
 $('exportBtn').onclick = () => {
-  const blob = new Blob([JSON.stringify({items:state.items.map(a => a.map(i => i.lines)), prio:state.prio}, null, 2)], {type:'application/json'});
+  const blob = new Blob([JSON.stringify({items:state.items.map(a => a.map(i => i.lines)), prio:state.prio, jewels:state.jewels.map(a => a.map(i => i.lines))}, null, 2)], {type:'application/json'});
   const a = document.createElement('a'); a.href = URL.createObjectURL(blob); a.download = 'quanah-solver-backup.json'; a.click(); URL.revokeObjectURL(a.href);
 };
 $('importBtn').onclick = () => $('importFile').click();
@@ -542,6 +639,7 @@ $('importFile').onchange = async e => {
 };
 document.addEventListener('keydown', e => {
   if(e.target.tagName === 'SELECT' || e.target.tagName === 'INPUT') return;
+  if(e.key === 'Backspace' && state.mode === 'jewels'){ if(state.jPending.length){ e.preventDefault(); state.jPending.pop(); renderJewels(); } return; }
   if(e.key === 'Backspace' && state.pending.length){ e.preventDefault(); state.pending.pop(); renderPicker(); }
 });
 $('themeBtn').onclick = () => {

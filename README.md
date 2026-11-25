@@ -7,6 +7,7 @@ A single-page tool that picks the best Hat / Top / Bottom / Cape / Glove / Shoe 
 - Exact dynamic-programming solver, plus a "what to hunt next" list
 - Line priorities (1-10): higher-priority lines are filled first and never traded for lower ones; equal priorities just maximize line count. Presets: "Max total lines" and "Core first" (DL/WH/Registry → ATK → Crit DMG → rest)
 - **Scan from game**: share your MapleStory window and hover over items. Each tooltip is read with OCR (Tesseract.js, in the browser) into a review list you can import. It only reads screen pixels. You can also paste or drop tooltip screenshots. Items already recorded (same slot and same lines, in any order) are skipped automatically, so you can rescan freely.
+- **Jewels tab**: record the 3 jewel slot colours (Red, Gray, Purple, Blue, Green, Prismatic) on each item, per slot. Shows the target set (Warrior: 4 Prismatic + 14 Red/Gray/Green). Jewel solving is not built yet.
 - Data stays in your browser (localStorage); export/import backups as JSON
 
 Line caps and target sets follow the [Quanah World Utilities](https://altord.github.io/QuanahWorldUtilities/Quanah%20World%20Utilities.htm) 3-Line Assistant.
