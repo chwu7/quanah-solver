@@ -103,6 +103,14 @@ th{font-size:11px;text-transform:uppercase;letter-spacing:.05em;color:var(--mute
 .scan-status{font-size:12.5px;color:var(--muted);margin:8px 0}
 .scan-status.live::before{content:"";display:inline-block;width:8px;height:8px;border-radius:50%;background:var(--bad);margin-right:6px;animation:blink 1.2s infinite}
 @keyframes blink{50%{opacity:.25}}
+.seen-log{margin:0 0 8px;font-size:12.5px}
+.seen-log:empty{display:none}
+.seen-log .seen-head{color:var(--muted);margin-bottom:4px}
+.seen-row{display:flex;gap:6px;align-items:center;flex-wrap:wrap;padding:4px 8px;border-radius:8px;background:var(--panel2);margin-bottom:4px}
+.seen-row .seen-ok{color:var(--ok);font-weight:600}
+.seen-row .seen-slot{font-weight:600;min-width:50px}
+.seen-row .seen-meta{margin-left:auto;color:var(--muted);font-size:11.5px}
+.seen-row.fresh{animation:added 1.2s ease-out}
 .scan-preview{max-width:100%;max-height:180px;border-radius:6px;border:1px solid var(--border);display:none}
 .scan-preview.show{display:block}
 .scan-views{display:flex;gap:10px;flex-wrap:wrap;align-items:flex-start}
@@ -165,6 +173,7 @@ footer{text-align:center;color:var(--muted);font-size:12px;padding:0 16px 24px}
         <button id="scanClearBtn" class="ghost">Clear found</button>
       </div>
       <div class="scan-status" id="scanStatus">Not scanning.</div>
+      <div class="seen-log" id="seenLog"></div>
       <div class="scan-views">
         <div class="scan-view" id="liveView"><span>What the scanner sees</span><canvas id="liveCanvas"></canvas><span id="liveInfo"></span></div>
         <div class="scan-view" id="readView"><span>Last tooltip read</span><canvas class="scan-preview" id="scanPreview"></canvas></div>
@@ -546,6 +555,7 @@ try{ const th = localStorage.getItem(KEY + '.theme'); if(th) document.documentEl
 // ---------- scan from game ----------
 const LINE_OPTS = [...STATS.map(s => s.k), 'other'];
 let found = [];   // review list: {sig, slot, lines, issues, seen}
+let seenLog = []; // already-recorded items read this session, newest first: {slot, lines, count, at}
 let live = null;
 const scanOk = f => f.slot >= 0 && validLines(f.lines);
 // ---------- debug logging (only with ?debug when served by tools/debug_server.py) ----------
@@ -586,10 +596,26 @@ function addFound(p){
   const complete = p.slot >= 0 && validLines(lines);
   const dup = found.find(f => f.sig === p.sig || (complete && f.slot === p.slot && lineKey(f.lines) === lineKey(lines)));
   const info = {label, slot:p.slot, lines, sig:p.sig, issues:p.issues};
-  if(complete && findItem(p.slot, lines)){ dbg('item', {action:'skipped-already-recorded', ...info}); setScanStatus(`Skipped ${label}. It's already recorded.`, live && live.running); return; }
+  if(complete && findItem(p.slot, lines)){
+    const key = p.slot + '|' + lineKey(lines);
+    let e = seenLog.find(x => x.key === key);
+    if(e){ e.count++; seenLog.splice(seenLog.indexOf(e), 1); } else e = {key, slot:p.slot, lines, count:1};
+    e.at = new Date(); seenLog.unshift(e);
+    dbg('item', {action:'seen-already-recorded', count:e.count, ...info});
+    setScanStatus(`Seen ${label}. Already recorded.`, live && live.running);
+    renderSeen(true); return;
+  }
   if(dup){ dup.seen++; dbg('item', {action:'duplicate-in-review-list', seen:dup.seen, ...info}); setScanStatus(`Already in the list: ${label}`, live && live.running); }
   else{ found.push({sig:p.sig, slot:p.slot, lines, issues:p.issues, seen:1}); dbg('item', {action:'added-to-review-list', complete, listSize:found.length, ...info}); setScanStatus(`Found ${label}`, live && live.running); }
   renderFound();
+}
+function renderSeen(fresh){
+  if(!seenLog.length){ $('seenLog').innerHTML = ''; return; }
+  const total = seenLog.reduce((n, e) => n + e.count, 0);
+  const shown = seenLog.slice(0, 6);
+  $('seenLog').innerHTML = `<div class="seen-head">Seen ${seenLog.length} already-recorded item${seenLog.length === 1 ? '' : 's'} (${total} read${total === 1 ? '' : 's'}). The scanner is working; these are just already stored.</div>` +
+    shown.map((e, i) => `<div class="seen-row ${fresh && i === 0 ? 'fresh' : ''}"><span class="seen-ok">✓ Seen</span><span class="seen-slot">${SLOTS[e.slot]}</span>${e.lines.map(k => tag(k)).join('')}<span class="seen-meta">${e.count > 1 ? `×${e.count} · ` : ''}${e.at.toLocaleTimeString()}</span></div>`).join('') +
+    (seenLog.length > shown.length ? `<div class="seen-head">…and ${seenLog.length - shown.length} more</div>` : '');
 }
 function renderFound(){
   const ok = found.filter(f => scanOk(f) && !findItem(f.slot, f.lines)).length;
@@ -632,7 +658,7 @@ $('scanImportBtn').onclick = () => {
   dbg('ui', {action:'import', added, skipped, leftInList:found.length, results});
   setScanStatus(`Imported ${added} item${added === 1 ? '' : 's'}${skipped ? `, skipped ${skipped} already recorded` : ''}.`, live && live.running);
 };
-$('scanClearBtn').onclick = () => { dbg('ui', {action:'clear-review-list', had:found.length}); found = []; renderFound(); };
+$('scanClearBtn').onclick = () => { dbg('ui', {action:'clear-review-list', had:found.length, seen:seenLog.length}); found = []; seenLog = []; renderFound(); renderSeen(); };
 $('scanBtn').onclick = async () => {
   if(live && live.running){ dbg('ui', {action:'stop-scan'}); live.stop(); return; }
   dbg('ui', {action:'start-scan'});
